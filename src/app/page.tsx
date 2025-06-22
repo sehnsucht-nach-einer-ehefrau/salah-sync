@@ -4,7 +4,18 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { MapPin, Clock, RefreshCw, Settings, Check } from "lucide-react"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
+import { MapPin, Clock, RefreshCw, Check } from "lucide-react"
 
 interface PrayerTimes {
   Fajr: string
@@ -46,7 +57,6 @@ export default function SalahSync() {
 
   // Downtime mode states
   const [downtimeMode, setDowntimeMode] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
   const [gripStrengthEnabled, setGripStrengthEnabled] = useState(true)
   const [currentDowntimeActivity, setCurrentDowntimeActivity] = useState<DowntimeActivity | null>(null)
   const [downtimeStartTime, setDowntimeStartTime] = useState<Date | null>(null)
@@ -54,6 +64,12 @@ export default function SalahSync() {
   const [lastGripTime, setLastGripTime] = useState<Date | null>(null)
   const [activityTimer, setActivityTimer] = useState<NodeJS.Timeout | null>(null)
   const [lastNotifiedActivity, setLastNotifiedActivity] = useState<string>("")
+  const [showDowntimeDialog, setShowDowntimeDialog] = useState(false)
+  const [pausedActivityTimer, setPausedActivityTimer] = useState<{
+    activity: DowntimeActivity
+    remainingTime: number
+    startTime: Date
+  } | null>(null)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
@@ -76,6 +92,8 @@ export default function SalahSync() {
     const savedLocation = localStorage.getItem("salah-sync-location")
     const savedGripEnabled = localStorage.getItem("salah-sync-grip-enabled")
     const savedDowntimeMode = localStorage.getItem("salah-sync-downtime-mode")
+    const savedLastGripTime = localStorage.getItem("salah-sync-last-grip-time")
+    const savedQuranTurn = localStorage.getItem("salah-sync-quran-turn")
 
     if (savedLocation) {
       try {
@@ -97,6 +115,14 @@ export default function SalahSync() {
 
     if (savedDowntimeMode === "true") {
       setDowntimeMode(true)
+    }
+
+    if (savedLastGripTime) {
+      setLastGripTime(new Date(savedLastGripTime))
+    }
+
+    if (savedQuranTurn !== null) {
+      setQuranTurn(savedQuranTurn === "true")
     }
 
     // Initialize audio for notifications
@@ -169,6 +195,22 @@ export default function SalahSync() {
       return `${hours}h ${minutes}m`
     }
     return `${minutes}m`
+  }
+
+  const formatDowntimeTimeUntil = (startTime: Date, duration: number): string => {
+    const now = new Date()
+    const endTime = addMinutes(startTime, duration)
+    const diff = endTime.getTime() - now.getTime()
+
+    if (diff <= 0) return ""
+
+    const minutes = Math.floor(diff / (1000 * 60))
+    const seconds = Math.floor((diff % (1000 * 60)) / 1000)
+
+    if (minutes > 0) {
+      return `${minutes}m`
+    }
+    return `${seconds}s`
   }
 
   const isPrayerTime = (now: Date): ScheduleItem | null => {
@@ -444,14 +486,13 @@ export default function SalahSync() {
 
     // If no current downtime activity, start with grip strength or main activity
     if (!currentDowntimeActivity) {
-      if (gripStrengthEnabled) {
+      if (gripStrengthEnabled && (!lastGripTime || now.getTime() - lastGripTime.getTime() >= 5 * 60 * 1000)) {
         setCurrentDowntimeActivity({
           name: "Grip Strength Training",
           description: "Start your downtime with grip strength training",
           duration: 5,
           type: "grip",
         })
-        setLastGripTime(now)
       } else {
         const activity = {
           name: quranTurn ? "Quran Reading" : "LeetCode Session",
@@ -470,7 +511,7 @@ export default function SalahSync() {
       setDowntimeStartTime(now)
     }
 
-    // Convert downtime activity to schedule item format
+    // Convert downtime activity to schedule item format and calculate next activity
     if (currentDowntimeActivity) {
       setCurrentActivity({
         name: currentDowntimeActivity.name,
@@ -478,6 +519,23 @@ export default function SalahSync() {
         startTime: downtimeStartTime || now,
         endTime: addMinutes(downtimeStartTime || now, currentDowntimeActivity.duration),
       })
+
+      // Set next activity for downtime mode
+      if (currentDowntimeActivity.type === "grip") {
+        // Don't show next activity during grip strength
+        setNextActivity("")
+        setTimeUntilNext("")
+      } else if (currentDowntimeActivity.type === "quran") {
+        setNextActivity("LeetCode Session")
+        if (downtimeStartTime) {
+          setTimeUntilNext(formatDowntimeTimeUntil(downtimeStartTime, currentDowntimeActivity.duration))
+        }
+      } else if (currentDowntimeActivity.type === "leetcode") {
+        setNextActivity("Quran Reading")
+        if (downtimeStartTime) {
+          setTimeUntilNext(formatDowntimeTimeUntil(downtimeStartTime, currentDowntimeActivity.duration))
+        }
+      }
     }
   }, [currentDowntimeActivity, downtimeStartTime, gripStrengthEnabled, lastGripTime, quranTurn, activityTimer])
 
@@ -497,13 +555,33 @@ export default function SalahSync() {
     if (downtimeMode && gripStrengthEnabled) {
       const checkGripTime = () => {
         const now = new Date()
-        if (lastGripTime && now.getTime() - lastGripTime.getTime() >= 5 * 60 * 1000) {
+        if (
+          lastGripTime &&
+          now.getTime() - lastGripTime.getTime() >= 5 * 60 * 1000 &&
+          currentDowntimeActivity?.type !== "grip"
+        ) {
+          // Pause current activity if it's not grip
+          if (currentDowntimeActivity && downtimeStartTime && activityTimer) {
+            const elapsed = now.getTime() - downtimeStartTime.getTime()
+            const remaining = currentDowntimeActivity.duration * 60 * 1000 - elapsed
+            if (remaining > 0) {
+              setPausedActivityTimer({
+                activity: currentDowntimeActivity,
+                remainingTime: remaining,
+                startTime: downtimeStartTime,
+              })
+            }
+            clearTimeout(activityTimer)
+            setActivityTimer(null)
+          }
+
           setCurrentDowntimeActivity({
             name: "Grip Strength Training",
             description: "Time for your grip strength set!",
             duration: 5,
             type: "grip",
           })
+          setDowntimeStartTime(now)
           playNotification()
         }
       }
@@ -511,7 +589,7 @@ export default function SalahSync() {
       const interval = setInterval(checkGripTime, 1000)
       return () => clearInterval(interval)
     }
-  }, [downtimeMode, gripStrengthEnabled, lastGripTime])
+  }, [downtimeMode, gripStrengthEnabled, lastGripTime, currentDowntimeActivity, downtimeStartTime, activityTimer])
 
   const playNotification = () => {
     if (audioRef.current) {
@@ -604,23 +682,46 @@ export default function SalahSync() {
 
     if (currentDowntimeActivity.type === "grip") {
       setLastGripTime(now)
-      // After grip, go to main activity (Quran or LeetCode)
-      const activity = {
-        name: quranTurn ? "Quran Reading" : "LeetCode Session",
-        description: quranTurn ? "Read and reflect on the Quran (30 min)" : "Practice coding problems (30 min)",
-        duration: 30,
-        type: quranTurn ? "quran" : "leetcode",
-      } as DowntimeActivity
+      localStorage.setItem("salah-sync-last-grip-time", now.toISOString())
 
-      setCurrentDowntimeActivity(activity)
+      // Resume paused activity if exists
+      if (pausedActivityTimer) {
+        setCurrentDowntimeActivity(pausedActivityTimer.activity)
+        setDowntimeStartTime(
+          new Date(
+            now.getTime() - (pausedActivityTimer.activity.duration * 60 * 1000 - pausedActivityTimer.remainingTime),
+          ),
+        )
 
-      // Start 30-minute timer
-      startActivityTimer(30, () => {
-        completeDowntimeActivity()
-      })
+        // Resume timer with remaining time
+        startActivityTimer(pausedActivityTimer.remainingTime / (60 * 1000), () => {
+          completeDowntimeActivity()
+        })
+
+        setPausedActivityTimer(null)
+      } else {
+        // Start new main activity (Quran or LeetCode)
+        const activity = {
+          name: quranTurn ? "Quran Reading" : "LeetCode Session",
+          description: quranTurn ? "Read and reflect on the Quran (30 min)" : "Practice coding problems (30 min)",
+          duration: 30,
+          type: quranTurn ? "quran" : "leetcode",
+        } as DowntimeActivity
+
+        setCurrentDowntimeActivity(activity)
+        setDowntimeStartTime(now)
+
+        // Start 30-minute timer
+        startActivityTimer(30, () => {
+          completeDowntimeActivity()
+        })
+      }
     } else {
       // After main activity, toggle for next time
-      setQuranTurn(!quranTurn)
+      const newQuranTurn = !quranTurn
+      setQuranTurn(newQuranTurn)
+      localStorage.setItem("salah-sync-quran-turn", newQuranTurn.toString())
+
       if (gripStrengthEnabled) {
         // Wait for next grip strength (will be triggered by timer)
         setCurrentDowntimeActivity({
@@ -629,16 +730,18 @@ export default function SalahSync() {
           duration: 5,
           type: "grip",
         })
+        setDowntimeStartTime(now)
       } else {
         // Go directly to next main activity
         const activity = {
-          name: !quranTurn ? "Quran Reading" : "LeetCode Session",
-          description: !quranTurn ? "Read and reflect on the Quran (30 min)" : "Practice coding problems (30 min)",
+          name: newQuranTurn ? "Quran Reading" : "LeetCode Session",
+          description: newQuranTurn ? "Read and reflect on the Quran (30 min)" : "Practice coding problems (30 min)",
           duration: 30,
-          type: !quranTurn ? "quran" : "leetcode",
+          type: newQuranTurn ? "quran" : "leetcode",
         } as DowntimeActivity
 
         setCurrentDowntimeActivity(activity)
+        setDowntimeStartTime(now)
 
         // Start 30-minute timer
         startActivityTimer(30, () => {
@@ -647,7 +750,6 @@ export default function SalahSync() {
       }
     }
 
-    setDowntimeStartTime(now)
     playNotification()
   }
 
@@ -660,6 +762,7 @@ export default function SalahSync() {
       // Exit downtime mode
       setCurrentDowntimeActivity(null)
       setDowntimeStartTime(null)
+      setPausedActivityTimer(null)
       if (activityTimer) {
         clearTimeout(activityTimer)
         setActivityTimer(null)
@@ -682,7 +785,7 @@ export default function SalahSync() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center p-4">
+      <div className="min-h-screen bg-white flex items-center justify-center p-4 transition-colors duration-500">
         <Card className="p-8 bg-white border border-gray-200 text-center shadow-lg">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black mx-auto mb-4"></div>
           <h2 className="text-xl font-semibold text-black mb-2">Loading...</h2>
@@ -694,7 +797,7 @@ export default function SalahSync() {
 
   if (!location) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center p-4">
+      <div className="min-h-screen bg-white flex items-center justify-center p-4 transition-colors duration-500">
         <Card className="p-8 bg-white border border-gray-200 text-center max-w-md shadow-lg">
           <MapPin className="h-12 w-12 text-black mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-black mb-4">Welcome to Salah Sync</h2>
@@ -713,7 +816,7 @@ export default function SalahSync() {
 
   if (!prayerTimes) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center p-4">
+      <div className="min-h-screen bg-white flex items-center justify-center p-4 transition-colors duration-500">
         <Card className="p-8 bg-white border border-gray-200 text-center shadow-lg">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black mx-auto mb-4"></div>
           <h2 className="text-xl font-semibold text-black mb-2">Loading Prayer Times</h2>
@@ -737,7 +840,7 @@ export default function SalahSync() {
 
   if (!currentActivity) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center p-4">
+      <div className="min-h-screen bg-white flex items-center justify-center p-4 transition-colors duration-500">
         <Card className="p-8 bg-white border border-gray-200 text-center shadow-lg">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black mx-auto mb-4"></div>
           <h2 className="text-xl font-semibold text-black mb-2">Calculating Schedule</h2>
@@ -748,94 +851,163 @@ export default function SalahSync() {
   }
 
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center p-4">
+    <div
+      className={`min-h-screen flex items-center justify-center p-4 transition-all duration-700 ease-in-out ${
+        downtimeMode ? "bg-black" : "bg-white"
+      }`}
+    >
       <div className="text-center max-w-2xl">
-        <Card className="p-12 bg-white border border-gray-200 mb-6 shadow-lg">
-          <div className="flex items-center justify-between mb-4">
+        <Card
+          className={`p-12 border mb-6 shadow-lg transition-all duration-700 ease-in-out ${
+            downtimeMode ? "bg-black border-gray-800 text-white" : "bg-white border-gray-200 text-black"
+          }`}
+        >
+          <div className="flex items-center justify-between">
             <div className="w-8"></div>
             <div className="flex-1">
-              <h1 className="text-4xl md:text-6xl font-bold text-black mb-4">{currentActivity.name}</h1>
+              <h1
+                className={`text-4xl md:text-6xl font-bold transition-all duration-700 -mb-4 ${
+                  downtimeMode ? "text-white" : "text-black"
+                }`}
+              >
+                {currentActivity.name}
+              </h1>
             </div>
-            {downtimeMode && (
-              <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
-              </div>
-            )}
+            <div className="w-8"></div>
           </div>
 
-          <p className="text-xl md:text-2xl text-gray-600 mb-8">{currentActivity.description}</p>
+          <p
+            className={`text-xl md:text-2xl mb-4 transition-all duration-700 ${
+              downtimeMode ? "text-gray-300" : "text-gray-600"
+            }`}
+          >
+            {currentActivity.description}
+          </p>
 
           {downtimeMode && currentDowntimeActivity?.type === "grip" && (
-            <Button
-              onClick={completeDowntimeActivity}
-              className="bg-green-600 hover:bg-green-700 text-white mb-6"
-              size="lg"
-            >
-              <Check className="h-5 w-5 mr-2" />
-              Complete Grip Set
-            </Button>
+            <div className="animate-in slide-in-from-bottom-4 duration-300">
+              <Button
+                onClick={completeDowntimeActivity}
+                className={`mb-6 transition-all duration-300 ease-in-out ${
+                  downtimeMode ? "bg-white hover:bg-gray-200 text-black" : "bg-black hover:bg-gray-800 text-white"
+                }`}
+                size="lg"
+              >
+                <Check className="h-5 w-5 mr-2" />
+                Complete Grip Set
+              </Button>
+
+            </div>
           )}
 
-          {!downtimeMode && nextActivity && timeUntilNext && (
-            <div className="flex items-center justify-center text-gray-500 text-lg">
-              <Clock className="h-5 w-5 mr-2" />
+
+          {nextActivity && timeUntilNext && (
+            <div
+              className={`flex items-center justify-center text-lg transition-all duration-700 ${
+                downtimeMode ? "text-gray-400" : "text-gray-500"
+              }`}
+            >
+              <Clock className="h-5 w-5 mr-2 mb-0.5" />
               <span>
                 Next: {nextActivity} in {timeUntilNext}
               </span>
             </div>
           )}
-        </Card>
 
-        <div className="flex items-center justify-center text-gray-400 text-sm space-x-4">
-          <div className="flex items-center">
-            <MapPin className="h-4 w-4 mr-1" />
-            <span>{location.city}</span>
-          </div>
-          <span>•</span>
-          <span>{currentTime.toLocaleTimeString()}</span>
-          <span>•</span>
-          <Button
-            onClick={() => setShowSettings(!showSettings)}
-            variant="ghost"
-            size="sm"
-            className="text-gray-400 hover:text-gray-600 p-0 h-auto"
-          >
-            <Settings className="h-4 w-4" />
-          </Button>
-        </div>
-
-        {showSettings && (
-          <Card className="mt-4 p-4 bg-gray-50 border border-gray-200">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">Downtime Mode</span>
-                <Button
-                  onClick={toggleDowntimeMode}
-                  variant={downtimeMode ? "default" : "outline"}
-                  size="sm"
-                  className="text-xs"
-                >
-                  {downtimeMode ? "ON" : "OFF"}
-                </Button>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">Grip Strength Training</span>
+          {downtimeMode && (
+              <div className="-mb-2">
                 <Button
                   onClick={() => toggleGripStrength(!gripStrengthEnabled)}
-                  variant={gripStrengthEnabled ? "default" : "outline"}
+                  variant="ghost"
                   size="sm"
-                  className="text-xs"
+                  className={`text-xs transition-all duration-300 ease-out ${
+                    downtimeMode
+                      ? "shadow-sm shadow-gray-800 text-gray-400 bg-black hover:bg-gray-900 hover:text-white"
+                      : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                  }`}
                 >
-                  {gripStrengthEnabled ? "ON" : "OFF"}
+                  Grip Training: {gripStrengthEnabled ? "ON" : "OFF"}
                 </Button>
               </div>
-              <Button onClick={resetLocation} variant="outline" size="sm" className="w-full text-xs">
-                <RefreshCw className="h-3 w-3 mr-1" />
-                Reset Location
-              </Button>
-            </div>
-          </Card>
-        )}
+          )}
+        </Card>
+
+        {/* Fixed bottom bar with dots */}
+        <div
+          className={`flex items-center justify-center text-md space-x-4 transition-all duration-700 ${
+            downtimeMode ? "text-gray-400" : "text-gray-400"
+          }`}
+        >
+          {/* Location - clickable to reset */}
+          <div className="flex items-center">
+            <button
+              onClick={resetLocation}
+              className="flex items-center hover:opacity-70 transition-opacity duration-200"
+            >
+              <MapPin className="h-4 w-4 mr-1 mb-0.5 flex-shrink-0" />
+            </button>
+            <span className="truncate">{location.city}</span>
+          </div>
+
+          <span>•</span>
+
+          {/* Time - Fixed width with monospace and seconds */}
+          <span className="font-mono min-w-[65px] text-center">
+            {currentTime.toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+              hour12: false,
+            })}
+          </span>
+
+          <span>•</span>
+
+          {/* Downtime toggle - simple text button */}
+          {downtimeMode ? (
+            <button
+              onClick={toggleDowntimeMode}
+              className={`transition-all duration-200 hover:opacity-70 mb-0.5 ${
+                downtimeMode ? "text-gray-400" : "text-gray-400"
+              }`}
+            >
+              Exit
+            </button>
+          ) : (
+            <AlertDialog open={showDowntimeDialog} onOpenChange={setShowDowntimeDialog}>
+              <AlertDialogTrigger asChild>
+                <button className="text-gray-400 transition-all duration-200 hover:opacity-70 text-md mb-0.5">Downtime</button>
+              </AlertDialogTrigger>
+              <AlertDialogContent className={downtimeMode ? "bg-gray-900 border-gray-800" : "bg-white"}>
+                <AlertDialogHeader>
+                  <AlertDialogTitle className={downtimeMode ? "text-white" : "text-black"}>
+                    <span className="text-3xl">Enter Downtime Mode?</span>
+                  </AlertDialogTitle>
+                  <AlertDialogDescription className={downtimeMode ? "text-gray-300" : "text-gray-600"}>
+                    <span className = "text-lg">This will switch to alternating Quran reading and LeetCode sessions with optional grip strength
+                    training.</span>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel className={downtimeMode ? "border-gray-600 text-gray-300" : ""}>
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => {
+                      toggleDowntimeMode()
+                      setShowDowntimeDialog(false)
+                    }}
+                    className={
+                      downtimeMode ? "bg-white hover:bg-gray-100 text-black" : "bg-black hover:bg-gray-800 text-white"
+                    }
+                  >
+                    Enter Downtime
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+        </div>
       </div>
     </div>
   )
