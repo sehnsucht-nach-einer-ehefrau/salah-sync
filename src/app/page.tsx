@@ -1,7 +1,7 @@
 
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { MapPin, Clock, RefreshCw, Settings, Check } from "lucide-react"
@@ -137,115 +137,6 @@ export default function SalahSync() {
     }
   }, [currentActivity, lastNotifiedActivity])
 
-  // Calculate current activity when prayer times or current time changes
-  useEffect(() => {
-    if (prayerTimes && location) {
-      if (downtimeMode) {
-        handleDowntimeMode()
-      } else {
-        calculateCurrentActivity()
-      }
-    }
-  }, [prayerTimes, currentTime, downtimeMode])
-
-  // Handle downtime mode logic
-  useEffect(() => {
-    if (downtimeMode && gripStrengthEnabled) {
-      const checkGripTime = () => {
-        const now = new Date()
-        if (lastGripTime && now.getTime() - lastGripTime.getTime() >= 5 * 60 * 1000) {
-          setCurrentDowntimeActivity({
-            name: "Grip Strength Training",
-            description: "Time for your grip strength set!",
-            duration: 5,
-            type: "grip",
-          })
-          playNotification()
-        }
-      }
-
-      const interval = setInterval(checkGripTime, 1000)
-      return () => clearInterval(interval)
-    }
-  }, [downtimeMode, gripStrengthEnabled, lastGripTime])
-
-  const playNotification = () => {
-    if (audioRef.current) {
-      audioRef.current.play().catch((e) => console.log("Audio play failed:", e))
-    }
-  }
-
-  const requestLocation = async () => {
-    try {
-      setLoading(true)
-      setError("")
-
-      if (!navigator.geolocation) {
-        throw new Error("Geolocation is not supported by this browser")
-      }
-
-      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 300000,
-        })
-      })
-
-      const { latitude, longitude } = position.coords
-
-      let city = "Unknown City"
-      try {
-        const response = await fetch(
-          `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`,
-        )
-        if (response.ok) {
-          const data = await response.json()
-          city = data.city || data.locality || data.principalSubdivision || "Unknown City"
-        }
-      } catch (err) {
-        console.warn("Could not get city name:", err)
-      }
-
-      const locationData = { latitude, longitude, city }
-      setLocation(locationData)
-      localStorage.setItem("salah-sync-location", JSON.stringify(locationData))
-      await saveLocationForCron(locationData) // Add this line
-
-      await fetchPrayerTimes(latitude, longitude)
-    } catch (err: any) {
-      console.error("Location error:", err)
-      setError(err.message || "Unable to get your location. Please enable location services.")
-      setLoading(false)
-    }
-  }
-
-  const fetchPrayerTimes = async (latitude: number, longitude: number) => {
-    try {
-      const today = new Date()
-      const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}?latitude=${latitude}&longitude=${longitude}&method=2`
-
-      const response = await fetch(url)
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch prayer times: ${response.status}`)
-      }
-
-      const data = await response.json()
-
-      if (data.data && data.data.timings) {
-        setPrayerTimes(data.data.timings)
-        setLoading(false)
-      } else {
-        throw new Error("Invalid prayer times data received")
-      }
-    } catch (err: any) {
-      console.error("Prayer times error:", err)
-      setError("Failed to fetch prayer times. Please try again.")
-      setLoading(false)
-    }
-  }
-
   const parseTime = (timeString: string): Date => {
     const [hours, minutes] = timeString.split(":").map(Number)
     const date = new Date()
@@ -347,140 +238,7 @@ export default function SalahSync() {
     setActivityTimer(timer)
   }
 
-  const handleDowntimeMode = () => {
-    const now = new Date()
-
-    // Check if it's prayer time - prayer overrides downtime
-    const prayerActivity = isPrayerTime(now)
-    if (prayerActivity) {
-      setCurrentActivity(prayerActivity)
-      if (activityTimer) {
-        clearTimeout(activityTimer)
-        setActivityTimer(null)
-      }
-      return
-    }
-
-    // If no current downtime activity, start with grip strength or main activity
-    if (!currentDowntimeActivity) {
-      if (gripStrengthEnabled) {
-        setCurrentDowntimeActivity({
-          name: "Grip Strength Training",
-          description: "Start your downtime with grip strength training",
-          duration: 5,
-          type: "grip",
-        })
-        setLastGripTime(now)
-      } else {
-        const activity = {
-          name: quranTurn ? "Quran Reading" : "LeetCode Session",
-          description: quranTurn ? "Read and reflect on the Quran (30 min)" : "Practice coding problems (30 min)",
-          duration: 30,
-          type: quranTurn ? "quran" : "leetcode",
-        } as DowntimeActivity
-
-        setCurrentDowntimeActivity(activity)
-
-        // Start 30-minute timer for Quran/LeetCode
-        startActivityTimer(30, () => {
-          completeDowntimeActivity()
-        })
-      }
-      setDowntimeStartTime(now)
-    }
-
-    // Convert downtime activity to schedule item format
-    if (currentDowntimeActivity) {
-      setCurrentActivity({
-        name: currentDowntimeActivity.name,
-        description: currentDowntimeActivity.description,
-        startTime: downtimeStartTime || now,
-        endTime: addMinutes(downtimeStartTime || now, currentDowntimeActivity.duration),
-      })
-    }
-  }
-
-  const completeDowntimeActivity = () => {
-    if (!currentDowntimeActivity) return
-
-    const now = new Date()
-
-    if (activityTimer) {
-      clearTimeout(activityTimer)
-      setActivityTimer(null)
-    }
-
-    if (currentDowntimeActivity.type === "grip") {
-      setLastGripTime(now)
-      // After grip, go to main activity (Quran or LeetCode)
-      const activity = {
-        name: quranTurn ? "Quran Reading" : "LeetCode Session",
-        description: quranTurn ? "Read and reflect on the Quran (30 min)" : "Practice coding problems (30 min)",
-        duration: 30,
-        type: quranTurn ? "quran" : "leetcode",
-      } as DowntimeActivity
-
-      setCurrentDowntimeActivity(activity)
-
-      // Start 30-minute timer
-      startActivityTimer(30, () => {
-        completeDowntimeActivity()
-      })
-    } else {
-      // After main activity, toggle for next time
-      setQuranTurn(!quranTurn)
-      if (gripStrengthEnabled) {
-        // Wait for next grip strength (will be triggered by timer)
-        setCurrentDowntimeActivity({
-          name: "Free Time",
-          description: "Relax until your next grip strength set (5 min)",
-          duration: 5,
-          type: "grip",
-        })
-      } else {
-        // Go directly to next main activity
-        const activity = {
-          name: !quranTurn ? "Quran Reading" : "LeetCode Session",
-          description: !quranTurn ? "Read and reflect on the Quran (30 min)" : "Practice coding problems (30 min)",
-          duration: 30,
-          type: !quranTurn ? "quran" : "leetcode",
-        } as DowntimeActivity
-
-        setCurrentDowntimeActivity(activity)
-
-        // Start 30-minute timer
-        startActivityTimer(30, () => {
-          completeDowntimeActivity()
-        })
-      }
-    }
-
-    setDowntimeStartTime(now)
-    playNotification()
-  }
-
-  const toggleDowntimeMode = () => {
-    const newMode = !downtimeMode
-    setDowntimeMode(newMode)
-    localStorage.setItem("salah-sync-downtime-mode", newMode.toString())
-
-    if (!newMode) {
-      // Exit downtime mode
-      setCurrentDowntimeActivity(null)
-      setDowntimeStartTime(null)
-      if (activityTimer) {
-        clearTimeout(activityTimer)
-        setActivityTimer(null)
-      }
-    }
-  }
-
-  const toggleGripStrength = (enabled: boolean) => {
-    setGripStrengthEnabled(enabled)
-    localStorage.setItem("salah-sync-grip-enabled", enabled.toString())
-  }
-
-  const calculateCurrentActivity = () => {
+  const calculateCurrentActivity = useCallback(() => {
     if (!prayerTimes) return
 
     const now = new Date()
@@ -668,6 +426,250 @@ export default function SalahSync() {
     setCurrentActivity(current)
     setNextActivity(next.name)
     setTimeUntilNext(formatTimeUntil(next.startTime))
+  }, [prayerTimes])
+
+  const handleDowntimeMode = useCallback(() => {
+    const now = new Date()
+
+    // Check if it's prayer time - prayer overrides downtime
+    const prayerActivity = isPrayerTime(now)
+    if (prayerActivity) {
+      setCurrentActivity(prayerActivity)
+      if (activityTimer) {
+        clearTimeout(activityTimer)
+        setActivityTimer(null)
+      }
+      return
+    }
+
+    // If no current downtime activity, start with grip strength or main activity
+    if (!currentDowntimeActivity) {
+      if (gripStrengthEnabled) {
+        setCurrentDowntimeActivity({
+          name: "Grip Strength Training",
+          description: "Start your downtime with grip strength training",
+          duration: 5,
+          type: "grip",
+        })
+        setLastGripTime(now)
+      } else {
+        const activity = {
+          name: quranTurn ? "Quran Reading" : "LeetCode Session",
+          description: quranTurn ? "Read and reflect on the Quran (30 min)" : "Practice coding problems (30 min)",
+          duration: 30,
+          type: quranTurn ? "quran" : "leetcode",
+        } as DowntimeActivity
+
+        setCurrentDowntimeActivity(activity)
+
+        // Start 30-minute timer for Quran/LeetCode
+        startActivityTimer(30, () => {
+          completeDowntimeActivity()
+        })
+      }
+      setDowntimeStartTime(now)
+    }
+
+    // Convert downtime activity to schedule item format
+    if (currentDowntimeActivity) {
+      setCurrentActivity({
+        name: currentDowntimeActivity.name,
+        description: currentDowntimeActivity.description,
+        startTime: downtimeStartTime || now,
+        endTime: addMinutes(downtimeStartTime || now, currentDowntimeActivity.duration),
+      })
+    }
+  }, [currentDowntimeActivity, downtimeStartTime, gripStrengthEnabled, lastGripTime, quranTurn, activityTimer])
+
+  // Calculate current activity when prayer times or current time changes
+  useEffect(() => {
+    if (prayerTimes && location) {
+      if (downtimeMode) {
+        handleDowntimeMode()
+      } else {
+        calculateCurrentActivity()
+      }
+    }
+  }, [prayerTimes, currentTime, downtimeMode, calculateCurrentActivity, handleDowntimeMode, location])
+
+  // Handle downtime mode logic
+  useEffect(() => {
+    if (downtimeMode && gripStrengthEnabled) {
+      const checkGripTime = () => {
+        const now = new Date()
+        if (lastGripTime && now.getTime() - lastGripTime.getTime() >= 5 * 60 * 1000) {
+          setCurrentDowntimeActivity({
+            name: "Grip Strength Training",
+            description: "Time for your grip strength set!",
+            duration: 5,
+            type: "grip",
+          })
+          playNotification()
+        }
+      }
+
+      const interval = setInterval(checkGripTime, 1000)
+      return () => clearInterval(interval)
+    }
+  }, [downtimeMode, gripStrengthEnabled, lastGripTime])
+
+  const playNotification = () => {
+    if (audioRef.current) {
+      audioRef.current.play().catch((e) => console.log("Audio play failed:", e))
+    }
+  }
+
+  const requestLocation = async () => {
+    try {
+      setLoading(true)
+      setError("")
+
+      if (!navigator.geolocation) {
+        throw new Error("Geolocation is not supported by this browser")
+      }
+
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 300000,
+        })
+      })
+
+      const { latitude, longitude } = position.coords
+
+      let city = "Unknown City"
+      try {
+        const response = await fetch(
+          `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`,
+        )
+        if (response.ok) {
+          const data = await response.json()
+          city = data.city || data.locality || data.principalSubdivision || "Unknown City"
+        }
+      } catch (err) {
+        console.warn("Could not get city name:", err)
+      }
+
+      const locationData = { latitude, longitude, city }
+      setLocation(locationData)
+      localStorage.setItem("salah-sync-location", JSON.stringify(locationData))
+      await saveLocationForCron(locationData)
+
+      await fetchPrayerTimes(latitude, longitude)
+    } catch (err: unknown) {
+      console.error("Location error:", err)
+      const errorMessage =
+        err instanceof Error ? err.message : "Unable to get your location. Please enable location services."
+      setError(errorMessage)
+      setLoading(false)
+    }
+  }
+
+  const fetchPrayerTimes = async (latitude: number, longitude: number) => {
+    try {
+      const today = new Date()
+      const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}?latitude=${latitude}&longitude=${longitude}&method=2`
+
+      const response = await fetch(url)
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch prayer times: ${response.status}`)
+      }
+
+      const data = await response.json()
+
+      if (data.data && data.data.timings) {
+        setPrayerTimes(data.data.timings)
+        setLoading(false)
+      } else {
+        throw new Error("Invalid prayer times data received")
+      }
+    } catch (err: unknown) {
+      console.error("Prayer times error:", err)
+      setError("Failed to fetch prayer times. Please try again.")
+      setLoading(false)
+    }
+  }
+
+  const completeDowntimeActivity = () => {
+    if (!currentDowntimeActivity) return
+
+    const now = new Date()
+
+    if (activityTimer) {
+      clearTimeout(activityTimer)
+      setActivityTimer(null)
+    }
+
+    if (currentDowntimeActivity.type === "grip") {
+      setLastGripTime(now)
+      // After grip, go to main activity (Quran or LeetCode)
+      const activity = {
+        name: quranTurn ? "Quran Reading" : "LeetCode Session",
+        description: quranTurn ? "Read and reflect on the Quran (30 min)" : "Practice coding problems (30 min)",
+        duration: 30,
+        type: quranTurn ? "quran" : "leetcode",
+      } as DowntimeActivity
+
+      setCurrentDowntimeActivity(activity)
+
+      // Start 30-minute timer
+      startActivityTimer(30, () => {
+        completeDowntimeActivity()
+      })
+    } else {
+      // After main activity, toggle for next time
+      setQuranTurn(!quranTurn)
+      if (gripStrengthEnabled) {
+        // Wait for next grip strength (will be triggered by timer)
+        setCurrentDowntimeActivity({
+          name: "Free Time",
+          description: "Relax until your next grip strength set (5 min)",
+          duration: 5,
+          type: "grip",
+        })
+      } else {
+        // Go directly to next main activity
+        const activity = {
+          name: !quranTurn ? "Quran Reading" : "LeetCode Session",
+          description: !quranTurn ? "Read and reflect on the Quran (30 min)" : "Practice coding problems (30 min)",
+          duration: 30,
+          type: !quranTurn ? "quran" : "leetcode",
+        } as DowntimeActivity
+
+        setCurrentDowntimeActivity(activity)
+
+        // Start 30-minute timer
+        startActivityTimer(30, () => {
+          completeDowntimeActivity()
+        })
+      }
+    }
+
+    setDowntimeStartTime(now)
+    playNotification()
+  }
+
+  const toggleDowntimeMode = () => {
+    const newMode = !downtimeMode
+    setDowntimeMode(newMode)
+    localStorage.setItem("salah-sync-downtime-mode", newMode.toString())
+
+    if (!newMode) {
+      // Exit downtime mode
+      setCurrentDowntimeActivity(null)
+      setDowntimeStartTime(null)
+      if (activityTimer) {
+        clearTimeout(activityTimer)
+        setActivityTimer(null)
+      }
+    }
+  }
+
+  const toggleGripStrength = (enabled: boolean) => {
+    setGripStrengthEnabled(enabled)
+    localStorage.setItem("salah-sync-grip-enabled", enabled.toString())
   }
 
   const resetLocation = () => {

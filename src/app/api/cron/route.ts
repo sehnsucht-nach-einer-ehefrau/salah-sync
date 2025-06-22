@@ -325,9 +325,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Default location (you can make this configurable)
-    const latitude = 40.7128; // New York City - replace with your coordinates
-    const longitude = -74.006;
+    const latitude = 37.37368;
+    const longitude = -122.036568;
 
     // Fetch current prayer times
     const prayerTimes = await fetchPrayerTimes(latitude, longitude);
@@ -347,11 +346,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Check if this is a new activity (to avoid spam)
+    // Send notification
     const now = new Date();
-    const activityKey = `${currentActivity.name}-${now.getHours()}-${Math.floor(now.getMinutes() / 5) * 5}`; // 5-minute windows
-
-    // You might want to store this in a database, but for now we'll send every time
     const message = `🕐 <b>${currentActivity.name}</b>\n${currentActivity.description}\n\n⏰ ${now.toLocaleTimeString()}`;
 
     const success = await sendTelegramMessage(message);
