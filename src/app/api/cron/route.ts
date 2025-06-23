@@ -325,7 +325,8 @@ function calculateCurrentActivity(prayerTimes: PrayerTimes): ScheduleItem {
   const sortedSchedule = schedule.sort(
     (a, b) => a.startTime.getTime() - b.startTime.getTime(),
   );
-  let nextIdx = sortedSchedule.findIndex((item) => item.startTime > now);
+  // THE FIX IS HERE: Changed 'let' to 'const'
+  const nextIdx = sortedSchedule.findIndex((item) => item.startTime > now);
   const currIdx =
     nextIdx === -1 || nextIdx === 0 ? sortedSchedule.length - 1 : nextIdx - 1;
   return sortedSchedule[currIdx];
