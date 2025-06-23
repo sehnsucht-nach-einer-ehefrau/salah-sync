@@ -15,7 +15,4 @@ jobs:
       - name: Call Vercel Cron API
         # This command sends a GET request to your production API endpoint.
         # It includes the CRON_SECRET as a Bearer token for authorization.
-        run: >
-          curl -X GET \
-          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-          "https://salah-synced.vercel.app/api/cron"
+        run: curl -X GET -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" "https://salah-sync-six.vercel.app/api/cron"
