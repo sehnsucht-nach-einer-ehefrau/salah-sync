@@ -2,16 +2,22 @@ name: Salah Sync Cron Job
 
 on:
   schedule:
-    # Runs every 5 minutes.
-    # Using '*/5' is gentler than '*' (every minute) on your APIs and Vercel's free tier.
     - cron: "*/5 * * * *"
-  # Allows you to run this workflow manually from the Actions tab on GitHub
   workflow_dispatch:
 
 jobs:
   cron:
     runs-on: ubuntu-latest
     steps:
+      - name: Check if Secret is present
+        run: |
+          if [ -z "${{ secrets.CRON_SECRET }}" ]; then
+            echo "Error: CRON_SECRET is not set in GitHub repository secrets."
+            exit 1
+          else
+            echo "Success: CRON_SECRET is set."
+          fi
+
       - name: Call Vercel Cron API
         run: |
           curl --fail -X GET -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" "https://salah-sync-six.vercel.app/api/cron"
