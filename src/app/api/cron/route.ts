@@ -17,11 +17,13 @@ interface ScheduleItem {
 
 async function fetchPrayerTimes(
   latitude: number,
-  longitude: number,
+  longitude: number
 ): Promise<PrayerTimes | null> {
   try {
     const today = new Date();
-    const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}?latitude=${latitude}&longitude=${longitude}&method=2`;
+    const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${
+      today.getMonth() + 1
+    }-${today.getFullYear()}?latitude=${latitude}&longitude=${longitude}&method=2`;
 
     const response = await fetch(url);
     if (!response.ok) return null;
@@ -50,7 +52,7 @@ function subtractMinutes(date: Date, minutes: number): Date {
 }
 
 function calculateCurrentActivity(
-  prayerTimes: PrayerTimes,
+  prayerTimes: PrayerTimes
 ): ScheduleItem | null {
   const now = new Date();
   const fajrTime = parseTime(prayerTimes.Fajr);
@@ -188,7 +190,9 @@ function calculateCurrentActivity(
     const napMinutes = Math.max(0, 480 - nightSleepMinutes);
     schedule.push({
       name: "Nap Time",
-      description: `Rest and recharge (${Math.round((napMinutes / 60) * 10) / 10} hours for 8h total sleep)`,
+      description: `Rest and recharge (${
+        Math.round((napMinutes / 60) * 10) / 10
+      } hours for 8h total sleep)`,
       startTime: napStart,
       endTime: addMinutes(napStart, napMinutes),
     });
@@ -307,7 +311,7 @@ async function sendTelegramMessage(message: string) {
           text: message,
           parse_mode: "HTML",
         }),
-      },
+      }
     );
 
     return response.ok;
@@ -333,7 +337,7 @@ export async function GET(request: NextRequest) {
     if (!prayerTimes) {
       return NextResponse.json(
         { error: "Failed to fetch prayer times" },
-        { status: 500 },
+        { status: 500 }
       );
     }
 
@@ -342,13 +346,15 @@ export async function GET(request: NextRequest) {
     if (!currentActivity) {
       return NextResponse.json(
         { error: "Failed to calculate current activity" },
-        { status: 500 },
+        { status: 500 }
       );
     }
 
     // Send notification
     const now = new Date();
-    const message = `🕐 <b>${currentActivity.name}</b>\n${currentActivity.description}\n\n⏰ ${now.toLocaleTimeString()}`;
+    const message = `🕐 <b>${currentActivity.name}</b>\n${
+      currentActivity.description
+    }\n\n⏰ ${now.toLocaleTimeString()}`;
 
     const success = await sendTelegramMessage(message);
 
@@ -361,7 +367,7 @@ export async function GET(request: NextRequest) {
     console.error("Cron job error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

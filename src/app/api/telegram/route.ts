@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
       console.error("Missing Telegram credentials");
       return NextResponse.json(
         { error: "Missing Telegram credentials" },
-        { status: 500 },
+        { status: 500 }
       );
     }
 
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
       console.error("Telegram API error:", errorData);
       return NextResponse.json(
         { error: "Failed to send message" },
-        { status: 500 },
+        { status: 500 }
       );
     }
 
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     console.error("Error sending Telegram message:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
