@@ -1,0 +1,21 @@
+name: Salah Sync Cron Job
+
+on:
+  schedule:
+    # Runs every 5 minutes.
+    # Using '*/5' is gentler than '*' (every minute) on your APIs and Vercel's free tier.
+    - cron: "*/5 * * * *"
+  # Allows you to run this workflow manually from the Actions tab on GitHub
+  workflow_dispatch:
+
+jobs:
+  cron:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Vercel Cron API
+        # This command sends a GET request to your production API endpoint.
+        # It includes the CRON_SECRET as a Bearer token for authorization.
+        run: >
+          curl -X GET \
+          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+          "https://salah-synced.vercel.app/api/cron"
