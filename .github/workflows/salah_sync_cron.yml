@@ -2,22 +2,23 @@ name: Salah Sync Cron Job
 
 on:
   schedule:
+    # Runs every 5 minutes
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
   cron:
     runs-on: ubuntu-latest
-    steps:
-      - name: Check if Secret is present
-        run: |
-          if [ -z "${{ secrets.CRON_SECRET }}" ]; then
-            echo "Error: CRON_SECRET is not set in GitHub repository secrets."
-            exit 1
-          else
-            echo "Success: CRON_SECRET is set."
-          fi
+    env:
+      # This securely maps your GitHub secret to an environment variable
+      # that the 'run' step can use. This is the safest way.
+      CRON_SECRET_FROM_ENV: ${{ secrets.CRON_SECRET }}
 
+    steps:
       - name: Call Vercel Cron API
         run: |
-          curl --fail -X GET -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" "https://salah-sync-six.vercel.app/api/cron"
+          # The shell will now correctly use the environment variable,
+          # regardless of any special characters it contains.
+          curl --fail -X GET \
+          -H "Authorization: Bearer $CRON_SECRET_FROM_ENV" \
+          "https://salah-sync-six.vercel.app/api/cron"
