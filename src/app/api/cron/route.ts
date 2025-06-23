@@ -1,5 +1,7 @@
+import { kv } from "@vercel/kv";
 import { type NextRequest, NextResponse } from "next/server";
 
+// --- Interfaces (same as frontend) ---
 interface PrayerTimes {
   Fajr: string;
   Dhuhr: string;
@@ -7,7 +9,6 @@ interface PrayerTimes {
   Maghrib: string;
   Isha: string;
 }
-
 interface ScheduleItem {
   name: string;
   description: string;
@@ -15,359 +16,399 @@ interface ScheduleItem {
   endTime: Date;
 }
 
-async function fetchPrayerTimes(
-  latitude: number,
-  longitude: number
-): Promise<PrayerTimes | null> {
-  try {
-    const today = new Date();
-    const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${
-      today.getMonth() + 1
-    }-${today.getFullYear()}?latitude=${latitude}&longitude=${longitude}&method=2`;
-
-    const response = await fetch(url);
-    if (!response.ok) return null;
-
-    const data = await response.json();
-    return data.data?.timings || null;
-  } catch (error) {
-    console.error("Error fetching prayer times:", error);
-    return null;
-  }
-}
-
-function parseTime(timeString: string): Date {
+// --- Scheduling Logic (Copied EXACTLY from page.tsx) ---
+const parseTime = (timeString: string): Date => {
   const [hours, minutes] = timeString.split(":").map(Number);
   const date = new Date();
   date.setHours(hours, minutes, 0, 0);
   return date;
-}
+};
+const addMinutes = (date: Date, minutes: number): Date =>
+  new Date(date.getTime() + minutes * 60000);
+const subtractMinutes = (date: Date, minutes: number): Date =>
+  new Date(date.getTime() - minutes * 60000);
 
-function addMinutes(date: Date, minutes: number): Date {
-  return new Date(date.getTime() + minutes * 60000);
-}
-
-function subtractMinutes(date: Date, minutes: number): Date {
-  return new Date(date.getTime() - minutes * 60000);
-}
-
-function calculateCurrentActivity(
-  prayerTimes: PrayerTimes
-): ScheduleItem | null {
+function calculateCurrentActivity(prayerTimes: PrayerTimes): ScheduleItem {
+  const DURATION = {
+    TAHAJJUD: 30,
+    EAT_QURAN: 30,
+    FAJR: 10,
+    WORKOUT: 60,
+    SHOWER: 5,
+    LEETCODE: 120,
+    BOOTDEV: 60,
+    NAFL: 15,
+    DHUHR: 15,
+    ASR: 10,
+    MAGHRIB: 10,
+    EAT_DINNER: 30,
+    WIND_DOWN: 30,
+    WRITING: 30,
+    ISHA: 30,
+  };
   const now = new Date();
-  const fajrTime = parseTime(prayerTimes.Fajr);
-  const dhuhrTime = parseTime(prayerTimes.Dhuhr);
-  const asrTime = parseTime(prayerTimes.Asr);
-  const maghribTime = parseTime(prayerTimes.Maghrib);
-  const ishaTime = parseTime(prayerTimes.Isha);
-
-  // Calculate if we need the 8+ hour sleep logic
-  const tahajjudNormalTime = subtractMinutes(fajrTime, 60);
-  const sleepStartTime = addMinutes(ishaTime, 30);
-
-  let nightSleepMinutes = 0;
-  if (tahajjudNormalTime.getTime() > sleepStartTime.getTime()) {
-    nightSleepMinutes =
-      (tahajjudNormalTime.getTime() - sleepStartTime.getTime()) / (1000 * 60);
-  } else {
-    const endOfDay = new Date(sleepStartTime);
-    endOfDay.setHours(23, 59, 59, 999);
-    const startOfNextDay = new Date(tahajjudNormalTime);
-    startOfNextDay.setHours(0, 0, 0, 0);
-    nightSleepMinutes =
-      (endOfDay.getTime() -
-        sleepStartTime.getTime() +
-        (tahajjudNormalTime.getTime() - startOfNextDay.getTime())) /
-      (1000 * 60);
-  }
-
-  const needsLongSleep = nightSleepMinutes > 480;
-
-  let tahajjudStart: Date;
-  let eatQuranStart: Date;
-  let workoutStart: Date | null = null;
-
-  if (needsLongSleep) {
-    tahajjudStart = addMinutes(sleepStartTime, 480);
-    eatQuranStart = addMinutes(tahajjudStart, 30);
-
-    const eatQuranEnd = addMinutes(eatQuranStart, 30);
-    const timeUntilFajr =
-      (fajrTime.getTime() - eatQuranEnd.getTime()) / (1000 * 60);
-
-    if (timeUntilFajr >= 60) {
-      workoutStart = eatQuranEnd;
-    }
-  } else {
-    tahajjudStart = tahajjudNormalTime;
-    eatQuranStart = addMinutes(tahajjudStart, 30);
-    workoutStart = addMinutes(eatQuranStart, 30);
-  }
+  const fajrTime = parseTime(prayerTimes.Fajr),
+    dhuhrTime = parseTime(prayerTimes.Dhuhr),
+    asrTime = parseTime(prayerTimes.Asr),
+    maghribTime = parseTime(prayerTimes.Maghrib),
+    ishaTime = parseTime(prayerTimes.Isha);
+  const ishaEnd = addMinutes(ishaTime, DURATION.ISHA);
+  const tahajjudStartReference = subtractMinutes(fajrTime, 60);
+  let nightSleepMillis = tahajjudStartReference.getTime() - ishaEnd.getTime();
+  if (nightSleepMillis < 0) nightSleepMillis += 24 * 60 * 60 * 1000;
+  const nightSleepMinutes = nightSleepMillis / 60000;
+  const full8HoursSleep = nightSleepMinutes >= 480;
 
   const schedule: ScheduleItem[] = [];
+  const ishaStart = ishaTime,
+    ishaEndTime = addMinutes(ishaStart, DURATION.ISHA),
+    writingStart = subtractMinutes(ishaStart, DURATION.WRITING),
+    windDownStart = subtractMinutes(writingStart, DURATION.WIND_DOWN),
+    maghribStart = maghribTime,
+    maghribEnd = addMinutes(maghribStart, DURATION.MAGHRIB),
+    eatDinnerStart = maghribEnd,
+    eatDinnerEnd = addMinutes(eatDinnerStart, DURATION.EAT_DINNER),
+    asrStart = asrTime,
+    asrEnd = addMinutes(asrStart, DURATION.ASR),
+    dhuhrStart = dhuhrTime,
+    dhuhrEnd = addMinutes(dhuhrStart, DURATION.DHUHR),
+    fajrStart = fajrTime,
+    fajrEnd = addMinutes(fajrStart, DURATION.FAJR);
 
-  // Build complete schedule
-  schedule.push({
-    name: "Tahajjud",
-    description:
-      "Night prayer - Connect with Allah in the blessed hours (30 min)",
-    startTime: tahajjudStart,
-    endTime: addMinutes(tahajjudStart, 30),
-  });
-
-  schedule.push({
-    name: "Eat + Quran",
-    description: "Nourish your body and soul together (30 min)",
-    startTime: eatQuranStart,
-    endTime: addMinutes(eatQuranStart, 30),
-  });
-
-  if (workoutStart) {
+  if (full8HoursSleep) {
+    const sleepStart = ishaEndTime,
+      wakeUpTime = addMinutes(sleepStart, 480);
     schedule.push({
-      name: "Workout Session",
-      description: "Physical training - Strengthen your body (1 hour)",
-      startTime: workoutStart,
-      endTime: addMinutes(workoutStart, 60),
+      name: "Sleep",
+      description: "Full 8 hours rest achieved",
+      startTime: sleepStart,
+      endTime: wakeUpTime,
     });
-
-    const coldShowerStart = addMinutes(workoutStart, 60);
+    let ptr = wakeUpTime;
     schedule.push({
-      name: "Cold Shower",
-      description: "Refresh and energize yourself (5 min)",
-      startTime: coldShowerStart,
-      endTime: addMinutes(coldShowerStart, 5),
+      name: "Tahajjud",
+      description: "Night prayer (30 min)",
+      startTime: ptr,
+      endTime: (ptr = addMinutes(ptr, DURATION.TAHAJJUD)),
     });
-
-    const leetcodeStart = addMinutes(coldShowerStart, 5);
     schedule.push({
-      name: "LeetCode Session",
-      description: "Sharpen your problem-solving skills (2 hours)",
-      startTime: leetcodeStart,
-      endTime: addMinutes(leetcodeStart, 120),
+      name: "Eat while Quran",
+      description: "Nourish body and soul (30 min)",
+      startTime: ptr,
+      endTime: (ptr = addMinutes(ptr, DURATION.EAT_QURAN)),
     });
-
-    const bootdevStart = addMinutes(leetcodeStart, 120);
+    if ((fajrTime.getTime() - ptr.getTime()) / 60000 >= DURATION.WORKOUT) {
+      schedule.push({
+        name: "Work out",
+        description: "Strengthen your body (1 hour)",
+        startTime: ptr,
+        endTime: (ptr = addMinutes(ptr, DURATION.WORKOUT)),
+      });
+      if ((fajrTime.getTime() - ptr.getTime()) / 60000 >= DURATION.SHOWER) {
+        schedule.push({
+          name: "Cold Shower",
+          description: "Refresh and energize (5 min)",
+          startTime: ptr,
+          endTime: (ptr = addMinutes(ptr, DURATION.SHOWER)),
+        });
+        if ((fajrTime.getTime() - ptr.getTime()) / 60000 >= DURATION.BOOTDEV) {
+          schedule.push({
+            name: "Boot.dev Session",
+            description: "Learn backend dev (1 hour)",
+            startTime: ptr,
+            endTime: (ptr = addMinutes(ptr, DURATION.BOOTDEV)),
+          });
+          if (
+            (fajrTime.getTime() - ptr.getTime()) / 60000 >=
+            DURATION.LEETCODE
+          ) {
+            schedule.push({
+              name: "LeetCode Session",
+              description: "Sharpen your skills (2 hours)",
+              startTime: ptr,
+              endTime: (ptr = addMinutes(ptr, DURATION.LEETCODE)),
+            });
+          }
+        }
+      }
+    }
+    if (ptr < fajrStart)
+      schedule.push({
+        name: "Personal Projects & Learning",
+        description: "Build and create until Fajr",
+        startTime: ptr,
+        endTime: fajrStart,
+      });
     schedule.push({
-      name: "Boot.dev Session",
-      description: "Learn backend development (1 hour)",
-      startTime: bootdevStart,
-      endTime: addMinutes(bootdevStart, 60),
+      name: "Fajr Prayer",
+      description: "Dawn prayer (10 min)",
+      startTime: fajrStart,
+      endTime: fajrEnd,
     });
-
-    const naflStart = addMinutes(bootdevStart, 60);
-    schedule.push({
-      name: "8 Rakat Nafl",
-      description: "Voluntary prayer - Spiritual recharge (15 min)",
-      startTime: naflStart,
-      endTime: addMinutes(naflStart, 15),
-    });
-
-    const personalProjectsStart = addMinutes(naflStart, 15);
     schedule.push({
       name: "Personal Projects & Learning",
-      description: "Build and create - Apply your knowledge",
-      startTime: personalProjectsStart,
-      endTime: dhuhrTime,
+      description: "Build and create until Dhuhr",
+      startTime: fajrEnd,
+      endTime: dhuhrStart,
     });
-  }
-
-  schedule.push({
-    name: "Fajr Prayer",
-    description: "Dawn prayer - Start your day with gratitude (10 min)",
-    startTime: fajrTime,
-    endTime: addMinutes(fajrTime, 10),
-  });
-
-  schedule.push({
-    name: "Dhuhr Prayer",
-    description: "Midday prayer - Pause and remember Allah (20 min)",
-    startTime: dhuhrTime,
-    endTime: addMinutes(dhuhrTime, 20),
-  });
-
-  if (!needsLongSleep) {
-    const napStart = addMinutes(dhuhrTime, 20);
-    const napMinutes = Math.max(0, 480 - nightSleepMinutes);
     schedule.push({
-      name: "Nap Time",
-      description: `Rest and recharge (${
-        Math.round((napMinutes / 60) * 10) / 10
-      } hours for 8h total sleep)`,
-      startTime: napStart,
-      endTime: addMinutes(napStart, napMinutes),
+      name: "Dhuhr Prayer",
+      description: "Midday prayer (15 min)",
+      startTime: dhuhrStart,
+      endTime: dhuhrEnd,
     });
-
-    const naflWarmupStart = addMinutes(napStart, napMinutes);
-    schedule.push({
-      name: "8 Rakat Nafl Warm Up",
-      description: "Voluntary prayer - Prepare for responsibilities (15 min)",
-      startTime: naflWarmupStart,
-      endTime: addMinutes(naflWarmupStart, 15),
-    });
-
-    const responsibilitiesStart = addMinutes(naflWarmupStart, 15);
+    const midPointDhuhrAsr = new Date(
+      dhuhrEnd.getTime() + (asrStart.getTime() - dhuhrEnd.getTime()) / 2,
+    );
     schedule.push({
       name: "Responsibilities",
-      description: "Handle your duties and commitments",
-      startTime: responsibilitiesStart,
-      endTime: asrTime,
+      description: "Handle your duties",
+      startTime: dhuhrEnd,
+      endTime: midPointDhuhrAsr,
+    });
+    const naflEnd = addMinutes(midPointDhuhrAsr, DURATION.NAFL);
+    schedule.push({
+      name: "8 Raka'at Nafl",
+      description: "Voluntary prayer (15 min)",
+      startTime: midPointDhuhrAsr,
+      endTime: naflEnd,
+    });
+    schedule.push({
+      name: "Responsibilities",
+      description: "Handle your duties",
+      startTime: naflEnd,
+      endTime: asrStart,
+    });
+  } else {
+    const napMinutes = Math.max(0, 480 - nightSleepMinutes);
+    schedule.push({
+      name: "Sleep",
+      description: `Rest until Tahajjud (${(nightSleepMinutes / 60).toFixed(1)} hours)`,
+      startTime: ishaEndTime,
+      endTime: tahajjudStartReference,
+    });
+    schedule.push({
+      name: "Tahajjud",
+      description: "Night prayer (30 min)",
+      startTime: tahajjudStartReference,
+      endTime: addMinutes(tahajjudStartReference, DURATION.TAHAJJUD),
+    });
+    schedule.push({
+      name: "Eat while Quran",
+      description: "Nourish body and soul (30 min)",
+      startTime: addMinutes(tahajjudStartReference, DURATION.TAHAJJUD),
+      endTime: fajrStart,
+    });
+    schedule.push({
+      name: "Fajr Prayer",
+      description: "Dawn prayer (10 min)",
+      startTime: fajrStart,
+      endTime: fajrEnd,
+    });
+    const workoutEnd = addMinutes(fajrEnd, DURATION.WORKOUT),
+      showerEnd = addMinutes(workoutEnd, DURATION.SHOWER),
+      leetcodeEnd = addMinutes(showerEnd, DURATION.LEETCODE),
+      bootdevEnd = addMinutes(leetcodeEnd, DURATION.BOOTDEV),
+      nafl1End = addMinutes(bootdevEnd, DURATION.NAFL);
+    schedule.push({
+      name: "Work out",
+      description: "Strengthen your body (1 hour)",
+      startTime: fajrEnd,
+      endTime: workoutEnd,
+    });
+    schedule.push({
+      name: "Cold Shower",
+      description: "Refresh and energize (5 min)",
+      startTime: workoutEnd,
+      endTime: showerEnd,
+    });
+    schedule.push({
+      name: "LeetCode Session",
+      description: "Sharpen your skills (2 hours)",
+      startTime: showerEnd,
+      endTime: leetcodeEnd,
+    });
+    schedule.push({
+      name: "Boot.dev Session",
+      description: "Learn backend dev (1 hour)",
+      startTime: leetcodeEnd,
+      endTime: bootdevEnd,
+    });
+    schedule.push({
+      name: "8 Raka'at Nafl",
+      description: "Voluntary prayer (15 min)",
+      startTime: bootdevEnd,
+      endTime: nafl1End,
+    });
+    schedule.push({
+      name: "Personal Projects & Learning",
+      description: "Build and create until Dhuhr",
+      startTime: nafl1End,
+      endTime: dhuhrStart,
+    });
+    schedule.push({
+      name: "Dhuhr Prayer",
+      description: "Midday prayer (15 min)",
+      startTime: dhuhrStart,
+      endTime: dhuhrEnd,
+    });
+    const napEnd = addMinutes(dhuhrEnd, napMinutes);
+    schedule.push({
+      name: "Nap",
+      description: `Rest to complete 8h sleep (${(napMinutes / 60).toFixed(1)}h)`,
+      startTime: dhuhrEnd,
+      endTime: napEnd,
+    });
+    const nafl2End = addMinutes(napEnd, DURATION.NAFL);
+    schedule.push({
+      name: "8 Raka'at Nafl",
+      description: "Voluntary prayer (15 min)",
+      startTime: napEnd,
+      endTime: nafl2End,
+    });
+    schedule.push({
+      name: "Responsibilities",
+      description: "Handle your duties until Asr",
+      startTime: nafl2End,
+      endTime: asrStart,
     });
   }
-
   schedule.push({
     name: "Asr Prayer",
-    description: "Afternoon prayer - Seek Allah's guidance (10 min)",
-    startTime: asrTime,
-    endTime: addMinutes(asrTime, 10),
+    description: "Afternoon prayer (10 min)",
+    startTime: asrStart,
+    endTime: asrEnd,
   });
-
-  const responsibilitiesAfterAsrStart = addMinutes(asrTime, 10);
   schedule.push({
     name: "Responsibilities",
-    description: "Handle your duties and commitments",
-    startTime: responsibilitiesAfterAsrStart,
-    endTime: maghribTime,
+    description: "Handle duties until Maghrib",
+    startTime: asrEnd,
+    endTime: maghribStart,
   });
-
   schedule.push({
     name: "Maghrib Prayer",
-    description: "Sunset prayer - Thank Allah for the day (10 min)",
-    startTime: maghribTime,
-    endTime: addMinutes(maghribTime, 10),
+    description: "Sunset prayer (10 min)",
+    startTime: maghribStart,
+    endTime: maghribEnd,
   });
-
-  const eatStart = addMinutes(maghribTime, 10);
   schedule.push({
     name: "Eat",
-    description: "Evening meal - Nourish yourself (30 min)",
-    startTime: eatStart,
-    endTime: addMinutes(eatStart, 30),
+    description: "Evening meal (30 min)",
+    startTime: eatDinnerStart,
+    endTime: eatDinnerEnd,
   });
-
-  const windDownStart = addMinutes(eatStart, 30);
   schedule.push({
-    name: "Wind Down Session",
-    description: "Restroom + Warm Shower + Brush Teeth (30 min)",
+    name: "Responsibilities",
+    description: "Handle duties until wind-down",
+    startTime: eatDinnerEnd,
+    endTime: windDownStart,
+  });
+  schedule.push({
+    name: "Wind down",
+    description: "Relax and prepare for sleep (30 min)",
     startTime: windDownStart,
-    endTime: addMinutes(windDownStart, 30),
+    endTime: writingStart,
   });
-
-  const writingStart = addMinutes(windDownStart, 30);
   schedule.push({
-    name: "Writing Session",
-    description: "Reflect and write - Express your thoughts",
+    name: "Writing",
+    description: "Journal or creative writing (30 min)",
     startTime: writingStart,
-    endTime: ishaTime,
+    endTime: ishaStart,
   });
-
   schedule.push({
     name: "Isha Prayer",
-    description: "Night prayer - End your day with worship (30 min)",
-    startTime: ishaTime,
-    endTime: addMinutes(ishaTime, 30),
+    description: "Night prayer (30 min)",
+    startTime: ishaStart,
+    endTime: ishaEndTime,
   });
 
-  schedule.push({
-    name: "Sleep",
-    description: "Rest well - Prepare for tomorrow (8 hours)",
-    startTime: addMinutes(ishaTime, 30),
-    endTime: tahajjudStart,
-  });
-
-  // Find current activity
-  for (let i = 0; i < schedule.length; i++) {
-    const item = schedule[i];
-    const nextItem = schedule[(i + 1) % schedule.length];
-
-    if (now >= item.startTime && now < item.endTime) {
-      return item;
-    } else if (now >= item.endTime && now < nextItem.startTime) {
-      return item;
-    }
-  }
-
-  return schedule[schedule.length - 1]; // Default to sleep
+  const sortedSchedule = schedule.sort(
+    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+  );
+  let nextIdx = sortedSchedule.findIndex((item) => item.startTime > now);
+  const currIdx =
+    nextIdx === -1 || nextIdx === 0 ? sortedSchedule.length - 1 : nextIdx - 1;
+  return sortedSchedule[currIdx];
 }
 
-async function sendTelegramMessage(message: string) {
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-
-  if (!botToken || !chatId) {
-    console.error("Missing Telegram credentials");
-    return false;
-  }
-
-  try {
-    const response = await fetch(
-      `https://api.telegram.org/bot${botToken}/sendMessage`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: message,
-          parse_mode: "HTML",
-        }),
-      }
-    );
-
-    return response.ok;
-  } catch (error) {
-    console.error("Error sending Telegram message:", error);
-    return false;
-  }
-}
-
+// --- Main Cron Job Handler ---
 export async function GET(request: NextRequest) {
-  try {
-    // Verify cron secret to prevent unauthorized access
-    const authHeader = request.headers.get("authorization");
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  // 1. Verify cron secret
+  const authHeader = request.headers.get("authorization");
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
-    const latitude = 37.37368;
-    const longitude = -122.036568;
+  // 2. Get user settings from KV
+  const userKey = "user_settings";
+  const userSettings = await kv.get<{
+    latitude: number;
+    longitude: number;
+    lastNotifiedActivity: string;
+  }>(userKey);
 
-    // Fetch current prayer times
-    const prayerTimes = await fetchPrayerTimes(latitude, longitude);
-    if (!prayerTimes) {
-      return NextResponse.json(
-        { error: "Failed to fetch prayer times" },
-        { status: 500 }
-      );
-    }
+  if (!userSettings?.latitude) {
+    return NextResponse.json({
+      message: "User location not set up. Skipping.",
+    });
+  }
 
-    // Calculate current activity
-    const currentActivity = calculateCurrentActivity(prayerTimes);
-    if (!currentActivity) {
-      return NextResponse.json(
-        { error: "Failed to calculate current activity" },
-        { status: 500 }
-      );
-    }
+  // 3. Fetch fresh prayer times
+  const today = new Date();
+  const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}?latitude=${userSettings.latitude}&longitude=${userSettings.longitude}&method=2`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    return NextResponse.json(
+      { error: "Failed to fetch prayer times" },
+      { status: 500 },
+    );
+  }
+  const data = await response.json();
+  const prayerTimes = data.data?.timings;
 
-    // Send notification
-    const now = new Date();
-    const message = `🕐 <b>${currentActivity.name}</b>\n${
-      currentActivity.description
-    }\n\n⏰ ${now.toLocaleTimeString()}`;
+  if (!prayerTimes) {
+    return NextResponse.json(
+      { error: "Invalid prayer times data" },
+      { status: 500 },
+    );
+  }
 
-    const success = await sendTelegramMessage(message);
+  // 4. Calculate what the current activity should be
+  const currentActivity = calculateCurrentActivity(prayerTimes);
+
+  // 5. THE CORE LOGIC: Check if the activity has changed
+  if (currentActivity.name !== userSettings.lastNotifiedActivity) {
+    // Activity has changed! Send a notification.
+    const message = `🕐 <b>${currentActivity.name}</b>\n${currentActivity.description}`;
+
+    // Send to Telegram
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    const chatId = process.env.TELEGRAM_CHAT_ID;
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: message,
+        parse_mode: "HTML",
+      }),
+    });
+
+    // 6. IMPORTANT: Update the last notified activity in KV
+    await kv.set(userKey, {
+      ...userSettings,
+      lastNotifiedActivity: currentActivity.name,
+    });
 
     return NextResponse.json({
-      success,
-      activity: currentActivity.name,
-      time: now.toISOString(),
+      status: "notified",
+      new_activity: currentActivity.name,
     });
-  } catch (error) {
-    console.error("Cron job error:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+  } else {
+    // Activity is the same, do nothing.
+    return NextResponse.json({
+      status: "no-change",
+      activity: currentActivity.name,
+    });
   }
 }
