@@ -1,7 +1,10 @@
+// app/api/cron/route.ts
+
 import { kv } from "@vercel/kv";
 import { type NextRequest, NextResponse } from "next/server";
+import { utcToZonedTime } from "date-fns-tz"; // <-- IMPORT THE MAGIC
 
-// --- Interfaces (same as frontend) ---
+// --- Interfaces ---
 interface PrayerTimes {
   Fajr: string;
   Dhuhr: string;
@@ -16,19 +19,25 @@ interface ScheduleItem {
   endTime: Date;
 }
 
-// --- Scheduling Logic (Copied EXACTLY from page.tsx) ---
-const parseTime = (timeString: string): Date => {
+// --- TIMEZONE-AWARE HELPER FUNCTIONS ---
+// This parseTime function now requires a timezone to work correctly on the server
+const parseTime = (timeString: string, timezone: string): Date => {
   const [hours, minutes] = timeString.split(":").map(Number);
-  const date = new Date();
-  date.setHours(hours, minutes, 0, 0);
-  return date;
+  // Create a date object that represents "today" in the user's timezone
+  const zonedDate = utcToZonedTime(new Date(), timezone);
+  zonedDate.setHours(hours, minutes, 0, 0);
+  return zonedDate;
 };
 const addMinutes = (date: Date, minutes: number): Date =>
   new Date(date.getTime() + minutes * 60000);
 const subtractMinutes = (date: Date, minutes: number): Date =>
   new Date(date.getTime() - minutes * 60000);
 
-function calculateCurrentActivity(prayerTimes: PrayerTimes): ScheduleItem {
+// The core scheduling logic, now timezone-aware
+function calculateCurrentActivity(
+  prayerTimes: PrayerTimes,
+  timezone: string,
+): ScheduleItem {
   const DURATION = {
     TAHAJJUD: 30,
     EAT_QURAN: 30,
@@ -46,12 +55,16 @@ function calculateCurrentActivity(prayerTimes: PrayerTimes): ScheduleItem {
     WRITING: 30,
     ISHA: 30,
   };
-  const now = new Date();
-  const fajrTime = parseTime(prayerTimes.Fajr),
-    dhuhrTime = parseTime(prayerTimes.Dhuhr),
-    asrTime = parseTime(prayerTimes.Asr),
-    maghribTime = parseTime(prayerTimes.Maghrib),
-    ishaTime = parseTime(prayerTimes.Isha);
+  // This is the key: get the current time IN THE USER'S TIMEZONE
+  const now = utcToZonedTime(new Date(), timezone);
+
+  // All prayer times are now parsed relative to the user's timezone
+  const fajrTime = parseTime(prayerTimes.Fajr, timezone),
+    dhuhrTime = parseTime(prayerTimes.Dhuhr, timezone),
+    asrTime = parseTime(prayerTimes.Asr, timezone),
+    maghribTime = parseTime(prayerTimes.Maghrib, timezone),
+    ishaTime = parseTime(prayerTimes.Isha, timezone);
+
   const ishaEnd = addMinutes(ishaTime, DURATION.ISHA);
   const tahajjudStartReference = subtractMinutes(fajrTime, 60);
   let nightSleepMillis = tahajjudStartReference.getTime() - ishaEnd.getTime();
@@ -60,6 +73,7 @@ function calculateCurrentActivity(prayerTimes: PrayerTimes): ScheduleItem {
   const full8HoursSleep = nightSleepMinutes >= 480;
 
   const schedule: ScheduleItem[] = [];
+  // The rest of your scheduling logic remains IDENTICAL, as it now operates on correct, zoned dates.
   const ishaStart = ishaTime,
     ishaEndTime = addMinutes(ishaStart, DURATION.ISHA),
     writingStart = subtractMinutes(ishaStart, DURATION.WRITING),
@@ -325,7 +339,6 @@ function calculateCurrentActivity(prayerTimes: PrayerTimes): ScheduleItem {
   const sortedSchedule = schedule.sort(
     (a, b) => a.startTime.getTime() - b.startTime.getTime(),
   );
-  // THE FIX IS HERE: Changed 'let' to 'const'
   const nextIdx = sortedSchedule.findIndex((item) => item.startTime > now);
   const currIdx =
     nextIdx === -1 || nextIdx === 0 ? sortedSchedule.length - 1 : nextIdx - 1;
@@ -334,27 +347,26 @@ function calculateCurrentActivity(prayerTimes: PrayerTimes): ScheduleItem {
 
 // --- Main Cron Job Handler ---
 export async function GET(request: NextRequest) {
-  // 1. Verify cron secret
   const authHeader = request.headers.get("authorization");
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // 2. Get user settings from KV
   const userKey = "user_settings";
   const userSettings = await kv.get<{
     latitude: number;
     longitude: number;
+    timezone: string; // <-- We will now get the timezone
     lastNotifiedActivity: string;
   }>(userKey);
 
-  if (!userSettings?.latitude) {
+  if (!userSettings?.latitude || !userSettings?.timezone) {
+    // Check for timezone too
     return NextResponse.json({
-      message: "User location not set up. Skipping.",
+      message: "User location/timezone not set up. Skipping.",
     });
   }
 
-  // 3. Fetch fresh prayer times
   const today = new Date();
   const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}?latitude=${userSettings.latitude}&longitude=${userSettings.longitude}&method=2`;
   const response = await fetch(url);
@@ -366,7 +378,6 @@ export async function GET(request: NextRequest) {
   }
   const data = await response.json();
   const prayerTimes = data.data?.timings;
-
   if (!prayerTimes) {
     return NextResponse.json(
       { error: "Invalid prayer times data" },
@@ -374,15 +385,15 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // 4. Calculate what the current activity should be
-  const currentActivity = calculateCurrentActivity(prayerTimes);
+  // Pass the user's timezone to the calculation function
+  const currentActivity = calculateCurrentActivity(
+    prayerTimes,
+    userSettings.timezone,
+  );
 
-  // 5. THE CORE LOGIC: Check if the activity has changed
   if (currentActivity.name !== userSettings.lastNotifiedActivity) {
-    // Activity has changed! Send a notification.
     const message = `🕐 <b>${currentActivity.name}</b>\n${currentActivity.description}`;
 
-    // Send to Telegram
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.TELEGRAM_CHAT_ID;
     await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -395,7 +406,6 @@ export async function GET(request: NextRequest) {
       }),
     });
 
-    // 6. IMPORTANT: Update the last notified activity in KV
     await kv.set(userKey, {
       ...userSettings,
       lastNotifiedActivity: currentActivity.name,
@@ -406,7 +416,6 @@ export async function GET(request: NextRequest) {
       new_activity: currentActivity.name,
     });
   } else {
-    // Activity is the same, do nothing.
     return NextResponse.json({
       status: "no-change",
       activity: currentActivity.name,

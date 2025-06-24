@@ -525,7 +525,7 @@ export default function SalahSync() {
     }
   };
 
-  // --- API and Location Functions ---
+
   const requestLocation = async () => {
     setLoading(true);
     setError("");
@@ -548,12 +548,21 @@ export default function SalahSync() {
       } catch (e) {
         console.warn("Could not get city name:", e);
       }
-      const locData = { latitude, longitude, city };
+
+      // --- CHANGE IS HERE ---
+      // 1. Get the browser's IANA timezone name
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+      // 2. Add it to the data we send
+      const locData = { latitude, longitude, city, timezone };
+
       setLocation(locData);
       localStorage.setItem("salah-sync-location", JSON.stringify(locData));
+      
+      // 3. The saveLocationForCron function will now send the timezone
       await saveLocationForCron(locData);
+      
       await fetchPrayerTimes(latitude, longitude);
-      // FIX 3: Changed 'any' to 'unknown' and added type check
     } catch (err: unknown) {
       const errorMessage =
         err instanceof Error

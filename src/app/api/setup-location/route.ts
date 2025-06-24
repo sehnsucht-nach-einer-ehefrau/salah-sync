@@ -1,26 +1,33 @@
+// app/api/setup-location/route.ts
+
 import { kv } from "@vercel/kv";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
   try {
-    const { latitude, longitude, city } = await request.json();
+    // CHANGE 1: Destructure timezone from the body
+    const { latitude, longitude, city, timezone } = await request.json();
 
-    if (latitude === undefined || longitude === undefined) {
+    if (
+      latitude === undefined ||
+      longitude === undefined ||
+      timezone === undefined // Add a check for timezone
+    ) {
       return NextResponse.json(
-        { error: "Missing latitude or longitude" },
+        { error: "Missing latitude, longitude, or timezone" },
         { status: 400 },
       );
     }
 
-    // Use a fixed key for the single user of this app
     const userKey = "user_settings";
 
-    // Store location and reset the last notified activity
+    // CHANGE 2: Save the timezone to Vercel KV
     await kv.set(userKey, {
       latitude,
       longitude,
       city,
-      lastNotifiedActivity: "", // Reset on new location setup
+      timezone, // Now it's saved!
+      lastNotifiedActivity: "",
     });
 
     return NextResponse.json({ success: true });
