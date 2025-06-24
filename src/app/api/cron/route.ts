@@ -2,7 +2,8 @@
 
 import { kv } from "@vercel/kv";
 import { type NextRequest, NextResponse } from "next/server";
-import { utcToZonedTime } from "date-fns-tz"; // <-- IMPORT THE MAGIC
+// THE FIX IS HERE: 'utcToZonedTime' is renamed to 'toZonedTime'
+import { toZonedTime } from "date-fns-tz";
 
 // --- Interfaces ---
 interface PrayerTimes {
@@ -20,11 +21,10 @@ interface ScheduleItem {
 }
 
 // --- TIMEZONE-AWARE HELPER FUNCTIONS ---
-// This parseTime function now requires a timezone to work correctly on the server
 const parseTime = (timeString: string, timezone: string): Date => {
   const [hours, minutes] = timeString.split(":").map(Number);
-  // Create a date object that represents "today" in the user's timezone
-  const zonedDate = utcToZonedTime(new Date(), timezone);
+  // Use the corrected function name here as well
+  const zonedDate = toZonedTime(new Date(), timezone);
   zonedDate.setHours(hours, minutes, 0, 0);
   return zonedDate;
 };
@@ -55,10 +55,9 @@ function calculateCurrentActivity(
     WRITING: 30,
     ISHA: 30,
   };
-  // This is the key: get the current time IN THE USER'S TIMEZONE
-  const now = utcToZonedTime(new Date(), timezone);
+  // Use the corrected function name here as well
+  const now = toZonedTime(new Date(), timezone);
 
-  // All prayer times are now parsed relative to the user's timezone
   const fajrTime = parseTime(prayerTimes.Fajr, timezone),
     dhuhrTime = parseTime(prayerTimes.Dhuhr, timezone),
     asrTime = parseTime(prayerTimes.Asr, timezone),
@@ -73,7 +72,7 @@ function calculateCurrentActivity(
   const full8HoursSleep = nightSleepMinutes >= 480;
 
   const schedule: ScheduleItem[] = [];
-  // The rest of your scheduling logic remains IDENTICAL, as it now operates on correct, zoned dates.
+  // The rest of your scheduling logic remains IDENTICAL.
   const ishaStart = ishaTime,
     ishaEndTime = addMinutes(ishaStart, DURATION.ISHA),
     writingStart = subtractMinutes(ishaStart, DURATION.WRITING),
@@ -356,12 +355,11 @@ export async function GET(request: NextRequest) {
   const userSettings = await kv.get<{
     latitude: number;
     longitude: number;
-    timezone: string; // <-- We will now get the timezone
+    timezone: string;
     lastNotifiedActivity: string;
   }>(userKey);
 
   if (!userSettings?.latitude || !userSettings?.timezone) {
-    // Check for timezone too
     return NextResponse.json({
       message: "User location/timezone not set up. Skipping.",
     });
@@ -385,7 +383,6 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Pass the user's timezone to the calculation function
   const currentActivity = calculateCurrentActivity(
     prayerTimes,
     userSettings.timezone,
