@@ -23,164 +23,90 @@ import {
 import { MapPin, Clock, RefreshCw, Check, Hand } from "lucide-react";
 
 interface PrayerTimes {
-  Fajr: string;
-  Dhuhr: string;
-  Asr: string;
-  Maghrib: string;
-  Isha: string;
+  Fajr: string; Dhuhr: string; Asr: string; Maghrib: string; Isha: string;
 }
-
 interface Location {
-  latitude: number;
-  longitude: number;
-  city: string;
+  latitude: number; longitude: number; city: string; timezone?: string;
 }
-
 interface ScheduleItem {
-  name: string;
-  description: string;
-  startTime: Date;
-  endTime: Date;
+  name: string; description: string; startTime: Date; endTime: Date;
 }
-
 interface DowntimeActivity {
-  name: string;
-  description: string;
-  duration: number; // in minutes
-  type: "grip" | "quran" | "leetcode" | "free";
+  name: string; description: string; duration: number; type: "grip" | "quran" | "leetcode";
 }
 
 export default function SalahSync() {
   const [location, setLocation] = useState<Location | null>(null);
   const [prayerTimes, setPrayerTimes] = useState<PrayerTimes | null>(null);
-  const [currentActivity, setCurrentActivity] = useState<ScheduleItem | null>(
-    null
-  );
+  const [currentActivity, setCurrentActivity] = useState<ScheduleItem | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [nextActivity, setNextActivity] = useState<string>("");
   const [timeUntilNext, setTimeUntilNext] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
-  const [lastNotifiedActivity, setLastNotifiedActivity] = useState<string>("");
 
   // Downtime mode states
   const [downtimeMode, setDowntimeMode] = useState(false);
   const [gripStrengthEnabled, setGripStrengthEnabled] = useState(true);
-  const [currentDowntimeActivity, setCurrentDowntimeActivity] =
-    useState<DowntimeActivity | null>(null);
+  const [currentDowntimeActivity, setCurrentDowntimeActivity] = useState<DowntimeActivity | null>(null);
   const [downtimeStartTime, setDowntimeStartTime] = useState<Date | null>(null);
   const [quranTurn, setQuranTurn] = useState(true);
   const [lastGripTime, setLastGripTime] = useState<Date | null>(null);
-  const [activityTimer, setActivityTimer] = useState<NodeJS.Timeout | null>(
-    null
-  );
+  const [activityTimer, setActivityTimer] = useState<NodeJS.Timeout | null>(null);
   const [showDowntimeDialog, setShowDowntimeDialog] = useState(false);
-  const [pausedActivityTimer, setPausedActivityTimer] = useState<{
-    activity: DowntimeActivity;
-    remainingTime: number;
-  } | null>(null);
+  const [pausedActivityTimer, setPausedActivityTimer] = useState<{ activity: DowntimeActivity; remainingTime: number } | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastNotifiedActivityRef = useRef<string>(""); // Use ref to avoid re-renders
 
   const saveLocationForCron = async (locationData: Location) => {
     try {
-      await fetch("/api/setup-location", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(locationData),
-      });
-    } catch (error) {
-      console.error("Failed to save location for cron:", error);
-    }
+      await fetch("/api/setup-location", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(locationData) });
+    } catch (error) { console.error("Failed to save location for cron:", error) }
   };
 
-  // Load saved data from localStorage on mount
   useEffect(() => {
     const savedLocation = localStorage.getItem("salah-sync-location");
     const savedGripEnabled = localStorage.getItem("salah-sync-grip-enabled");
     const savedDowntimeMode = localStorage.getItem("salah-sync-downtime-mode");
     const savedLastGripTime = localStorage.getItem("salah-sync-last-grip-time");
     const savedQuranTurn = localStorage.getItem("salah-sync-quran-turn");
-
     if (savedLocation) {
-      try {
-        const loc = JSON.parse(savedLocation);
-        setLocation(loc);
-        fetchPrayerTimes(loc.latitude, loc.longitude);
-      } catch (err) {
-        console.error("Error parsing saved location:", err);
-        localStorage.removeItem("salah-sync-location");
-        setLoading(false);
-      }
-    } else {
-      setLoading(false);
-    }
-
-    if (savedGripEnabled !== null)
-      setGripStrengthEnabled(savedGripEnabled === "true");
+      try { const loc = JSON.parse(savedLocation); setLocation(loc); fetchPrayerTimes(loc.latitude, loc.longitude) }
+      catch (err) { console.error("Error parsing saved location:", err); localStorage.removeItem("salah-sync-location"); setLoading(false) }
+    } else { setLoading(false) }
+    if (savedGripEnabled !== null) setGripStrengthEnabled(savedGripEnabled === "true");
     if (savedDowntimeMode === "true") setDowntimeMode(true);
     if (savedLastGripTime) setLastGripTime(new Date(savedLastGripTime));
     if (savedQuranTurn !== null) setQuranTurn(savedQuranTurn === "true");
-
-    // Initialize audio for notifications
-    audioRef.current = new Audio(
-      "data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT"
-    );
+    audioRef.current = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT");
   }, []);
 
-  // Send notification to Telegram
-  const sendTelegramNotification = async (message: string) => {
+  const sendTelegramNotification = useCallback(async (message: string) => {
     try {
-      await fetch("/api/telegram", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
-      });
-    } catch (error) {
-      console.error("Failed to send Telegram notification:", error);
-    }
-  };
+      // Use a unique identifier for the message content to prevent spam
+      const messageIdentifier = message.split('\n')[0]; // Use first line as identifier
+      if (lastNotifiedActivityRef.current === messageIdentifier) return;
+      lastNotifiedActivityRef.current = messageIdentifier;
+      
+      await fetch("/api/telegram", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message }) });
+    } catch (error) { console.error("Failed to send Telegram notification:", error) }
+  }, []);
 
-  // Update current time every second
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Send notification when activity changes
-  useEffect(() => {
-    if (currentActivity && currentActivity.name !== lastNotifiedActivity) {
-      const message = `🕐 ${currentActivity.name}\n${currentActivity.description}`;
-      sendTelegramNotification(message);
-      setLastNotifiedActivity(currentActivity.name);
-    }
-  }, [currentActivity, lastNotifiedActivity]);
-
-  // --- Helper Functions ---
   const parseTime = (timeString: string): Date => {
     const [hours, minutes] = timeString.split(":").map(Number);
-    const date = new Date();
-    date.setHours(hours, minutes, 0, 0);
+    const date = new Date(); date.setHours(hours, minutes, 0, 0);
     return date;
   };
+  const addMinutes = (date: Date, minutes: number): Date => new Date(date.getTime() + minutes * 60000);
+  const subtractMinutes = (date: Date, minutes: number): Date => new Date(date.getTime() - minutes * 60000);
 
-  const addMinutes = (date: Date, minutes: number): Date =>
-    new Date(date.getTime() + minutes * 60000);
-  const subtractMinutes = (date: Date, minutes: number): Date =>
-    new Date(date.getTime() - minutes * 60000);
-
-  const formatTimeUntil = (targetTime: Date): string => {
-    const now = new Date();
-    let diff = targetTime.getTime() - now.getTime();
-    if (diff < 0) diff += 24 * 60 * 60 * 1000;
-    if (diff <= 0) return "";
-    const hours = Math.floor(diff / 3600000);
-    const minutes = Math.floor((diff % 3600000) / 60000);
-    return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-  };
-
-  const formatDowntimeTimeUntil = useCallback(
-    (startTime: Date, duration: number): string => {
+  const formatDowntimeTimeUntil = useCallback((startTime: Date, duration: number): string => {
       const now = new Date();
       const endTime = addMinutes(startTime, duration);
       const diff = endTime.getTime() - now.getTime();
@@ -188,19 +114,65 @@ export default function SalahSync() {
       const minutes = Math.floor(diff / 60000);
       const seconds = Math.floor((diff % 60000) / 1000);
       return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-    },
-    []
-  );
+    }, []);
 
   const playNotification = () => {
-    if (audioRef.current) {
-      audioRef.current
-        .play()
-        .catch((e) => console.log("Audio play failed:", e));
-    }
+    if (audioRef.current) { audioRef.current.play().catch((e) => console.log("Audio play failed:", e)) }
   };
+    
+  const isPrayerTime = useCallback(() => {
+    if (!prayerTimes) return null;
+    const now = new Date();
+    const prayers = [
+      { name: "Fajr", time: parseTime(prayerTimes.Fajr), duration: 10 },
+      { name: "Dhuhr", time: parseTime(prayerTimes.Dhuhr), duration: 15 },
+      { name: "Asr", time: parseTime(prayerTimes.Asr), duration: 10 },
+      { name: "Maghrib", time: parseTime(prayerTimes.Maghrib), duration: 10 },
+      { name: "Isha", time: parseTime(prayerTimes.Isha), duration: 30 },
+    ];
+    for (const p of prayers) {
+      if (now >= p.time && now < addMinutes(p.time, p.duration)) {
+        return { name: `${p.name} Prayer`, description: `Time for ${p.name} prayer`, startTime: p.time, endTime: addMinutes(p.time, p.duration) };
+      }
+    }
+    return null;
+  }, [prayerTimes]);
+  
+  // --- NEW LOGIC: Dedicated Grip Strength Timer ---
+  useEffect(() => {
+    if (!downtimeMode || !gripStrengthEnabled) {
+      return;
+    }
 
-  // --- Strict Schedule Logic ---
+    const gripInterval = setInterval(() => {
+      if (currentDowntimeActivity?.type === 'grip' || isPrayerTime()) {
+        return;
+      }
+      const now = new Date();
+      if (!lastGripTime || now.getTime() - lastGripTime.getTime() >= 5 * 60 * 1000) {
+        sendTelegramNotification("💪 Time for your 5-minute Grip Strength set!");
+        playNotification();
+        
+        if (currentDowntimeActivity && downtimeStartTime && activityTimer) {
+          clearTimeout(activityTimer);
+          setActivityTimer(null);
+          const elapsed = now.getTime() - downtimeStartTime.getTime();
+          const remainingTime = (currentDowntimeActivity.duration * 60 * 1000) - elapsed;
+          if(remainingTime > 0) {
+            setPausedActivityTimer({ activity: currentDowntimeActivity, remainingTime });
+          }
+        }
+        
+        setCurrentDowntimeActivity({ name: "Grip Strength Training", description: "Time for your grip strength set!", duration: 5, type: "grip" });
+        setDowntimeStartTime(now);
+        setLastGripTime(now); // Set last grip time immediately to prevent re-triggering
+        localStorage.setItem("salah-sync-last-grip-time", now.toISOString());
+      }
+    }, 60000); // Check every minute
+
+    return () => clearInterval(gripInterval);
+  }, [downtimeMode, gripStrengthEnabled, lastGripTime, currentDowntimeActivity, downtimeStartTime, activityTimer, sendTelegramNotification, isPrayerTime]);
+
   const calculateStrictSchedule = useCallback(() => {
     if (!prayerTimes) return;
 
@@ -287,235 +259,103 @@ export default function SalahSync() {
     schedule.push({ name: "Writing", description: "Journal or creative writing (30 min)", startTime: writingStart, endTime: ishaStart });
     schedule.push({ name: "Isha Prayer", description: "Night prayer (30 min)", startTime: ishaStart, endTime: ishaEndTime });
 
-    const sortedSchedule = schedule.sort(
-      (a, b) => a.startTime.getTime() - b.startTime.getTime()
-    );
-    let nextIdx = sortedSchedule.findIndex((item) => item.startTime > now);
-    // FIX 1: 'let' changed to 'const'
-    const currIdx =
-      nextIdx === -1 || nextIdx === 0 ? sortedSchedule.length - 1 : nextIdx - 1;
-    if (nextIdx === -1) nextIdx = 0;
-
+    const sortedSchedule = schedule.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+    const nextIdx = sortedSchedule.findIndex((item) => item.startTime > now);
+    const currIdx = nextIdx === -1 || nextIdx === 0 ? sortedSchedule.length - 1 : nextIdx - 1;
+    
     setCurrentActivity(sortedSchedule[currIdx]);
-    setNextActivity(sortedSchedule[nextIdx].name);
-    setTimeUntilNext(formatTimeUntil(sortedSchedule[nextIdx].startTime));
+    setNextActivity(sortedSchedule[nextIdx === -1 ? 0 : nextIdx].name);
+    setTimeUntilNext(formatTimeUntil(sortedSchedule[nextIdx === -1 ? 0 : nextIdx].startTime));
   }, [prayerTimes]);
 
-  // --- Downtime Mode Logic ---
-  const isPrayerTime = useCallback(() => {
-    if (!prayerTimes) return null;
-    const now = new Date();
-    const prayers = [
-      { name: "Fajr", time: parseTime(prayerTimes.Fajr), duration: 10 },
-      { name: "Dhuhr", time: parseTime(prayerTimes.Dhuhr), duration: 15 },
-      { name: "Asr", time: parseTime(prayerTimes.Asr), duration: 10 },
-      { name: "Maghrib", time: parseTime(prayerTimes.Maghrib), duration: 10 },
-      { name: "Isha", time: parseTime(prayerTimes.Isha), duration: 30 },
-    ];
-    for (const p of prayers) {
-      if (now >= p.time && now < addMinutes(p.time, p.duration)) {
-        return {
-          name: `${p.name} Prayer`,
-          description: `Time for ${p.name} prayer`,
-          startTime: p.time,
-          endTime: addMinutes(p.time, p.duration),
-        };
-      }
-    }
-    return null;
-  }, [prayerTimes]);
-
-  const startActivityTimer = useCallback(
-    (durationMinutes: number, onComplete: () => void) => {
-      if (activityTimer) clearTimeout(activityTimer);
-      const timer = setTimeout(() => {
-        onComplete();
-        playNotification();
-      }, durationMinutes * 60000);
-      setActivityTimer(timer);
-    },
-    [activityTimer]
-  );
+  const startActivityTimer = useCallback((durationMinutes: number, onComplete: () => void) => {
+    if (activityTimer) clearTimeout(activityTimer);
+    const timer = setTimeout(() => { onComplete(); playNotification(); }, durationMinutes * 60000);
+    setActivityTimer(timer);
+  }, [activityTimer]);
 
   const completeDowntimeActivity = useCallback(() => {
-    if (!currentDowntimeActivity) return;
     const now = new Date();
-    if (activityTimer) clearTimeout(activityTimer);
-    setActivityTimer(null);
-
-    if (currentDowntimeActivity.type === "grip") {
-      setLastGripTime(now);
-      localStorage.setItem("salah-sync-last-grip-time", now.toISOString());
-      if (pausedActivityTimer) {
-        setCurrentDowntimeActivity(pausedActivityTimer.activity);
-        setDowntimeStartTime(
-          new Date(
-            now.getTime() -
-              (pausedActivityTimer.activity.duration * 60000 -
-                pausedActivityTimer.remainingTime)
-          )
-        );
-        startActivityTimer(
-          pausedActivityTimer.remainingTime / 60000,
-          completeDowntimeActivity
-        );
-        setPausedActivityTimer(null);
-      } else {
-        const nextMain = {
-          name: quranTurn ? "Quran Reading" : "LeetCode Session",
-          description: quranTurn
-            ? "Read and reflect on the Quran (30 min)"
-            : "Practice coding problems (30 min)",
-          duration: 30,
-          type: quranTurn ? "quran" : "leetcode",
-        } as DowntimeActivity;
-        setCurrentDowntimeActivity(nextMain);
-        setDowntimeStartTime(now);
-        startActivityTimer(30, completeDowntimeActivity);
-      }
-    } else {
-      // quran or leetcode finished
-      const newQuranTurn = !quranTurn;
-      setQuranTurn(newQuranTurn);
-      localStorage.setItem("salah-sync-quran-turn", newQuranTurn.toString());
-      setCurrentDowntimeActivity(null); // This will trigger the next cycle
+    if (activityTimer) { clearTimeout(activityTimer); setActivityTimer(null); }
+    
+    if (currentDowntimeActivity?.type === "grip") {
+        if (pausedActivityTimer) {
+            sendTelegramNotification(`💪 Grip set complete! Resuming ${pausedActivityTimer.activity.name}.`);
+            setCurrentDowntimeActivity(pausedActivityTimer.activity);
+            const resumeStartTime = new Date(now.getTime() - (pausedActivityTimer.activity.duration * 60000 - pausedActivityTimer.remainingTime));
+            setDowntimeStartTime(resumeStartTime);
+            startActivityTimer(pausedActivityTimer.remainingTime / 60000, completeDowntimeActivity);
+            setPausedActivityTimer(null);
+        } else {
+            setCurrentDowntimeActivity(null); 
+        }
+    } else { 
+        const newQuranTurn = !quranTurn;
+        setQuranTurn(newQuranTurn);
+        localStorage.setItem("salah-sync-quran-turn", newQuranTurn.toString());
+        
+        const nextActivityName = newQuranTurn ? "Quran Reading" : "LeetCode Session";
+        sendTelegramNotification(`✅ Session complete! Time for your next 30-minute activity: ${nextActivityName}.`);
+        
+        setCurrentDowntimeActivity(null); 
     }
-    playNotification();
-  }, [
-    activityTimer,
-    currentDowntimeActivity,
-    pausedActivityTimer,
-    quranTurn,
-    startActivityTimer,
-  ]);
+  }, [activityTimer, currentDowntimeActivity, pausedActivityTimer, quranTurn, startActivityTimer, sendTelegramNotification]);
 
   const handleDowntimeMode = useCallback(() => {
     const now = new Date();
-    const prayerActivity = isPrayerTime();
-    if (prayerActivity) {
-      setCurrentActivity(prayerActivity);
-      setNextActivity("");
-      setTimeUntilNext("");
-      if (activityTimer && !pausedActivityTimer && currentDowntimeActivity) {
-        const elapsed = now.getTime() - (downtimeStartTime?.getTime() ?? 0);
-        const remaining = currentDowntimeActivity.duration * 60000 - elapsed;
-        if (remaining > 0)
-          setPausedActivityTimer({
-            activity: currentDowntimeActivity,
-            remainingTime: remaining,
-          });
-        clearTimeout(activityTimer);
-        setActivityTimer(null);
-      }
-      return;
-    }
+    const prayer = isPrayerTime();
+    if (prayer) { setCurrentActivity(prayer); setNextActivity(""); setTimeUntilNext(""); return; }
 
-    if (pausedActivityTimer) {
-      // Resume from prayer
-      const activity = pausedActivityTimer.activity;
-      setCurrentDowntimeActivity(activity);
-      setDowntimeStartTime(
-        new Date(
-          now.getTime() -
-            (activity.duration * 60000 - pausedActivityTimer.remainingTime)
-        )
-      );
-      startActivityTimer(
-        pausedActivityTimer.remainingTime / 60000,
-        completeDowntimeActivity
-      );
-      setPausedActivityTimer(null);
-      return;
+    if (currentDowntimeActivity?.type === 'grip') {
+        if (!downtimeStartTime) return;
+        setCurrentActivity({ name: currentDowntimeActivity.name, description: currentDowntimeActivity.description, startTime: downtimeStartTime, endTime: addMinutes(downtimeStartTime, 5)});
+        setNextActivity(pausedActivityTimer ? `Resume: ${pausedActivityTimer.activity.name}` : "Next Session");
+        setTimeUntilNext("");
+        return;
     }
 
     if (!currentDowntimeActivity) {
-      let activity: DowntimeActivity;
-      if (
-        gripStrengthEnabled &&
-        (!lastGripTime ||
-          now.getTime() - lastGripTime.getTime() >= 5 * 60 * 1000)
-      ) {
-        activity = {
-          name: "Grip Strength Training",
-          description: "Start your downtime with grip training (5 min)",
-          duration: 5,
-          type: "grip",
-        };
-      } else {
-        activity = {
+        const activity: DowntimeActivity = {
           name: quranTurn ? "Quran Reading" : "LeetCode Session",
-          description: quranTurn
-            ? "Read and reflect on the Quran (30 min)"
-            : "Practice coding problems (30 min)",
-          duration: 30,
-          type: quranTurn ? "quran" : "leetcode",
+          description: quranTurn ? "Read and reflect on the Quran (30 min)" : "Practice coding problems (30 min)",
+          duration: 30, type: quranTurn ? "quran" : "leetcode",
         };
+        setCurrentDowntimeActivity(activity);
+        setDowntimeStartTime(now);
         startActivityTimer(30, completeDowntimeActivity);
-      }
-      setCurrentDowntimeActivity(activity);
-      setDowntimeStartTime(now);
+        sendTelegramNotification(`▶️ Starting 30-minute session: ${activity.name}`);
     }
-
+    
     if (currentDowntimeActivity && downtimeStartTime) {
-      setCurrentActivity({
-        name: currentDowntimeActivity.name,
-        description: currentDowntimeActivity.description,
-        startTime: downtimeStartTime,
-        endTime: addMinutes(
-          downtimeStartTime,
-          currentDowntimeActivity.duration
-        ),
-      });
-      const remainingTime = formatDowntimeTimeUntil(
-        downtimeStartTime,
-        currentDowntimeActivity.duration
-      );
-      if (currentDowntimeActivity.type === "grip") {
-        setNextActivity("");
-        setTimeUntilNext("");
-      } else {
+        setCurrentActivity({
+            name: currentDowntimeActivity.name, description: currentDowntimeActivity.description,
+            startTime: downtimeStartTime, endTime: addMinutes(downtimeStartTime, currentDowntimeActivity.duration),
+        });
         const nextName = quranTurn ? "LeetCode Session" : "Quran Reading";
+        const remaining = formatDowntimeTimeUntil(downtimeStartTime, currentDowntimeActivity.duration);
         setNextActivity(nextName);
-        setTimeUntilNext(remainingTime);
-      }
+        setTimeUntilNext(`in ${remaining}`);
     }
-    // FIX 2: Added missing dependency
   }, [
-    isPrayerTime,
-    currentDowntimeActivity,
-    downtimeStartTime,
-    gripStrengthEnabled,
-    lastGripTime,
-    quranTurn,
-    activityTimer,
-    pausedActivityTimer,
-    startActivityTimer,
-    completeDowntimeActivity,
-    formatDowntimeTimeUntil,
+    isPrayerTime, currentDowntimeActivity, downtimeStartTime, quranTurn, 
+    startActivityTimer, completeDowntimeActivity, pausedActivityTimer, sendTelegramNotification, formatDowntimeTimeUntil
   ]);
 
-  // Main effect to switch between modes
   useEffect(() => {
     if (prayerTimes && location) {
-      if (downtimeMode) {
-        handleDowntimeMode();
-      } else {
-        calculateStrictSchedule();
-      }
+        if (downtimeMode) {
+            handleDowntimeMode();
+        } else {
+            calculateStrictSchedule();
+        }
     }
-  }, [
-    prayerTimes,
-    currentTime,
-    downtimeMode,
-    calculateStrictSchedule,
-    handleDowntimeMode,
-    location,
-  ]);
+  }, [prayerTimes, currentTime, downtimeMode, calculateStrictSchedule, handleDowntimeMode, location]);
 
   const toggleDowntimeMode = () => {
     const newMode = !downtimeMode;
     setDowntimeMode(newMode);
     localStorage.setItem("salah-sync-downtime-mode", newMode.toString());
+    lastNotifiedActivityRef.current = ""; // Reset notification lock on mode switch
     if (!newMode) {
       setCurrentDowntimeActivity(null);
       setDowntimeStartTime(null);
@@ -525,49 +365,27 @@ export default function SalahSync() {
     }
   };
 
-
   const requestLocation = async () => {
-    setLoading(true);
-    setError("");
+    setLoading(true); setError("");
     try {
-      if (!navigator.geolocation)
-        throw new Error("Geolocation is not supported");
-      const pos = await new Promise<GeolocationPosition>((res, rej) =>
-        navigator.geolocation.getCurrentPosition(res, rej)
-      );
+      if (!navigator.geolocation) throw new Error("Geolocation is not supported");
+      const pos = await new Promise<GeolocationPosition>((res, rej) => navigator.geolocation.getCurrentPosition(res, rej));
       const { latitude, longitude } = pos.coords;
       let city = "Unknown City";
       try {
-        const geoRes = await fetch(
-          `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`
-        );
-        if (geoRes.ok) {
-          const data = await geoRes.json();
-          city = data.city || data.locality || "Unknown City";
-        }
-      } catch (e) {
-        console.warn("Could not get city name:", e);
-      }
-
-      // --- CHANGE IS HERE ---
-      // 1. Get the browser's IANA timezone name
+        const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`);
+        if (geoRes.ok) { const data = await geoRes.json(); city = data.city || data.locality || "Unknown City"; }
+      } catch (e) { console.warn("Could not get city name:", e); }
+      
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-
-      // 2. Add it to the data we send
       const locData = { latitude, longitude, city, timezone };
 
       setLocation(locData);
       localStorage.setItem("salah-sync-location", JSON.stringify(locData));
-      
-      // 3. The saveLocationForCron function will now send the timezone
       await saveLocationForCron(locData);
-      
       await fetchPrayerTimes(latitude, longitude);
     } catch (err: unknown) {
-      const errorMessage =
-        err instanceof Error
-          ? err.message
-          : "Unable to get your location.";
+      const errorMessage = err instanceof Error ? err.message : "Unable to get your location.";
       setError(errorMessage);
       setLoading(false);
     }
@@ -577,38 +395,23 @@ export default function SalahSync() {
     setLoading(true);
     try {
       const today = new Date();
-      const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${
-        today.getMonth() + 1
-      }-${today.getFullYear()}?latitude=${lat}&longitude=${lon}&method=2`;
+      const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}?latitude=${lat}&longitude=${lon}&method=2`;
       const res = await fetch(url);
-      if (!res.ok)
-        throw new Error(`Failed to fetch prayer times: ${res.status}`);
+      if (!res.ok) throw new Error(`Failed to fetch prayer times: ${res.status}`);
       const data = await res.json();
-      if (data.data && data.data.timings) {
-        setPrayerTimes(data.data.timings);
-      } else {
-        throw new Error("Invalid prayer times data received");
-      }
-      // FIX 4: Changed 'any' to 'unknown' and added type check
+      if (data.data && data.data.timings) { setPrayerTimes(data.data.timings); } 
+      else { throw new Error("Invalid prayer times data received"); }
     } catch (err: unknown) {
-      const errorMessage =
-        err instanceof Error
-          ? err.message
-          : "Failed to fetch prayer times.";
+      const errorMessage = err instanceof Error ? err.message : "Failed to fetch prayer times.";
       setError(errorMessage);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
   const resetLocation = () => {
     localStorage.removeItem("salah-sync-location");
-    setLocation(null);
-    setPrayerTimes(null);
-    setError("");
-    setLoading(false);
+    setLocation(null); setPrayerTimes(null); setError(""); setLoading(false);
   };
-
+  
   if (loading || !location || !prayerTimes || !currentActivity) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center p-4">
@@ -616,42 +419,22 @@ export default function SalahSync() {
           {!location ? (
             <>
               <MapPin className="h-12 w-12 text-black mx-auto mb-4" />
-              <h2 className="text-2xl font-bold text-black mb-4">
-                Welcome to Salah Sync
-              </h2>
-              <p className="text-gray-600 mb-6">
-                To create your strict daily schedule, we need your location to
-                get accurate prayer times.
-              </p>
+              <h2 className="text-2xl font-bold text-black mb-4">Welcome to Salah Sync</h2>
+              <p className="text-gray-600 mb-6">To create your strict daily schedule, we need your location to get accurate prayer times.</p>
               {error && <p className="text-red-500 mb-4 text-sm">{error}</p>}
-              <Button
-                onClick={requestLocation}
-                className="w-full bg-black hover:bg-gray-800 text-white"
-                disabled={loading}
-              >
+              <Button onClick={requestLocation} className="w-full bg-black hover:bg-gray-800 text-white" disabled={loading}>
                 <MapPin className="h-4 w-4 mr-2" /> Get My Location
               </Button>
             </>
           ) : (
             <>
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black mx-auto mb-4"></div>
-              <h2 className="text-xl font-semibold text-black mb-2">
-                {!prayerTimes ? "Loading Prayer Times" : "Calculating Schedule"}
-              </h2>
-              <p className="text-gray-600">
-                {!prayerTimes
-                  ? `Getting prayer times for ${location.city}...`
-                  : "Setting up your daily routine..."}
-              </p>
+              <h2 className="text-xl font-semibold text-black mb-2">{!prayerTimes ? "Loading Prayer Times" : "Calculating Schedule"}</h2>
+              <p className="text-gray-600">{!prayerTimes ? `Getting prayer times for ${location.city}...` : "Setting up your daily routine..."}</p>
               {error && (
                 <div className="mt-4">
                   <p className="text-red-500 mb-4 text-sm">{error}</p>
-                  <Button
-                    onClick={() =>
-                      fetchPrayerTimes(location.latitude, location.longitude)
-                    }
-                    className="bg-black hover:bg-gray-800 text-white"
-                  >
+                  <Button onClick={() => fetchPrayerTimes(location.latitude, location.longitude)} className="bg-black hover:bg-gray-800 text-white">
                     <RefreshCw className="h-4 w-4 mr-2" /> Retry
                   </Button>
                 </div>
@@ -664,156 +447,55 @@ export default function SalahSync() {
   }
 
   return (
-    <div
-      className={`min-h-screen flex items-center justify-center p-4 transition-all duration-700 ease-in-out ${
-        downtimeMode ? "bg-black" : "bg-white"
-      }`}
-    >
+    <div className={`min-h-screen flex items-center justify-center p-4 transition-all duration-700 ease-in-out ${downtimeMode ? "bg-black" : "bg-white"}`}>
       <div className="text-center max-w-2xl w-full">
-        <Card
-          className={`relative p-8 sm:p-12 border mb-6 shadow-lg transition-all duration-700 ease-in-out ${
-            downtimeMode
-              ? "bg-black border-gray-800 text-white"
-              : "bg-white border-gray-200 text-black"
-          }`}
-        >
+        <Card className={`relative p-8 sm:p-12 border mb-6 shadow-lg transition-all duration-700 ease-in-out ${downtimeMode ? "bg-black border-gray-800 text-white" : "bg-white border-gray-200 text-black"}`}>
           {downtimeMode && (
             <TooltipProvider delayDuration={0}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
-                    onClick={() => setGripStrengthEnabled((e) => !e)}
-                    variant="ghost"
-                    size="icon"
-                    className="absolute top-3 right-3 h-8 w-8 rounded-full hover:bg-white/10"
-                  >
-                    <Hand
-                      className={`h-5 w-5 transition-colors ${
-                        gripStrengthEnabled ? "text-white" : "text-gray-600"
-                      }`}
-                    />
+                  <Button onClick={() => setGripStrengthEnabled((e) => !e)} variant="ghost" size="icon" className="absolute top-3 right-3 h-8 w-8 rounded-full hover:bg-white/10">
+                    <Hand className={`h-5 w-5 transition-colors ${gripStrengthEnabled ? "text-white" : "text-gray-600"}`} />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent className="bg-black text-white border-gray-700">
-                  <p>Grip Training: {gripStrengthEnabled ? "ON" : "OFF"}</p>
-                </TooltipContent>
+                <TooltipContent className="bg-black text-white border-gray-700"><p>Grip Training: {gripStrengthEnabled ? "ON" : "OFF"}</p></TooltipContent>
               </Tooltip>
             </TooltipProvider>
           )}
-
-          <h1 className="text-4xl md:text-6xl font-bold mb-2">
-            {currentActivity.name}
-          </h1>
-          <p
-            className={`text-xl md:text-2xl mb-4 ${
-              downtimeMode ? "text-gray-300" : "text-gray-600"
-            }`}
-          >
-            {currentActivity.description}
-          </p>
-
+          <h1 className="text-4xl md:text-6xl font-bold mb-2">{currentActivity.name}</h1>
+          <p className={`text-xl md:text-2xl mb-4 ${downtimeMode ? "text-gray-300" : "text-gray-600"}`}>{currentActivity.description}</p>
           {downtimeMode && currentDowntimeActivity?.type === "grip" && (
             <div className="mt-6">
-              <Button
-                onClick={completeDowntimeActivity}
-                className="bg-white hover:bg-gray-200 text-black"
-                size="lg"
-              >
-                <Check className="h-5 w-5 mr-2" /> Completed Set
-              </Button>
+              <Button onClick={completeDowntimeActivity} className="bg-white hover:bg-gray-200 text-black" size="lg"><Check className="h-5 w-5 mr-2" /> Completed Set</Button>
             </div>
           )}
-
           {nextActivity && timeUntilNext && (
-            <div
-              className={`flex items-center justify-center text-lg mt-4 ${
-                downtimeMode ? "text-gray-400" : "text-gray-500"
-              }`}
-            >
+            <div className={`flex items-center justify-center text-lg mt-4 ${downtimeMode ? "text-gray-400" : "text-gray-500"}`}>
               <Clock className="h-5 w-5 mr-2 mb-1" />
-              <span>
-                Next: {nextActivity} in {timeUntilNext}
-              </span>
+              <span>Next: {nextActivity} {timeUntilNext}</span>
             </div>
           )}
         </Card>
-
-        <div
-          className={`flex items-center justify-center text-md gap-4 transition-all duration-700 ${
-            downtimeMode ? "text-gray-400" : "text-gray-500"
-          }`}
-        >
-          <button
-            onClick={resetLocation}
-            className="flex items-center hover:opacity-70 transition-opacity"
-          >
-            <MapPin className="h-4 w-4 mr-1 flex-shrink-0 mb-1" />
-            <span className="truncate">{location.city}</span>
-          </button>
+        <div className={`flex items-center justify-center text-md gap-4 transition-all duration-700 ${downtimeMode ? "text-gray-400" : "text-gray-500"}`}>
+          <button onClick={resetLocation} className="flex items-center hover:opacity-70 transition-opacity"><MapPin className="h-4 w-4 mr-1 flex-shrink-0 mb-1" /><span className="truncate">{location.city}</span></button>
           <span>•</span>
-
           <TooltipProvider delayDuration={0}>
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="font-mono min-w-[70px] text-center">
-                  {currentTime.toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit",
-                    hour12: false,
-                  })}
-                </span>
+                <span className="font-mono min-w-[70px] text-center">{currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span>
               </TooltipTrigger>
-              <TooltipContent className="bg-black text-white border-gray-700">
-                <p>
-                  {currentTime.toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    hour12: true,
-                  })}
-                </p>
-              </TooltipContent>
+              <TooltipContent className="bg-black text-white border-gray-700"><p>{currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true })}</p></TooltipContent>
             </Tooltip>
           </TooltipProvider>
-
           <span>•</span>
           {downtimeMode ? (
-            <button
-              onClick={toggleDowntimeMode}
-              className="hover:opacity-70 transition-opacity"
-            >
-              Exit
-            </button>
+            <button onClick={toggleDowntimeMode} className="hover:opacity-70 transition-opacity">Exit</button>
           ) : (
-            <AlertDialog
-              open={showDowntimeDialog}
-              onOpenChange={setShowDowntimeDialog}
-            >
-              <AlertDialogTrigger asChild>
-                <button className="hover:opacity-70 transition-opacity">
-                  Downtime
-                </button>
-              </AlertDialogTrigger>
+            <AlertDialog open={showDowntimeDialog} onOpenChange={setShowDowntimeDialog}>
+              <AlertDialogTrigger asChild><button className="hover:opacity-70 transition-opacity">Downtime</button></AlertDialogTrigger>
               <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle className="text-2xl">
-                    Enter Downtime Mode?
-                  </AlertDialogTitle>
-                  <AlertDialogDescription className="text-base">
-                    This overrides your strict schedule, switching to
-                    alternating Quran and LeetCode sessions with optional grip
-                    strength training.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={toggleDowntimeMode}
-                    className="bg-black hover:bg-gray-800 text-white"
-                  >
-                    Enter Downtime
-                  </AlertDialogAction>
-                </AlertDialogFooter>
+                <AlertDialogHeader><AlertDialogTitle className="text-2xl">Enter Downtime Mode?</AlertDialogTitle><AlertDialogDescription className="text-base">This overrides your strict schedule, switching to alternating Quran and LeetCode sessions with optional grip strength training.</AlertDialogDescription></AlertDialogHeader>
+                <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={toggleDowntimeMode} className="bg-black hover:bg-gray-800 text-white">Enter Downtime</AlertDialogAction></AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
           )}
