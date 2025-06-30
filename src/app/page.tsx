@@ -45,7 +45,6 @@ export default function SalahSync() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
 
-  // Downtime mode states
   const [downtimeMode, setDowntimeMode] = useState(false);
   const [gripStrengthEnabled, setGripStrengthEnabled] = useState(true);
   const [currentDowntimeActivity, setCurrentDowntimeActivity] = useState<DowntimeActivity | null>(null);
@@ -57,7 +56,7 @@ export default function SalahSync() {
   const [pausedActivityTimer, setPausedActivityTimer] = useState<{ activity: DowntimeActivity; remainingTime: number } | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const lastNotifiedActivityRef = useRef<string>(""); // Use ref to avoid re-renders
+  const lastNotifiedActivityRef = useRef<string>("");
 
   const saveLocationForCron = async (locationData: Location) => {
     try {
@@ -84,11 +83,9 @@ export default function SalahSync() {
 
   const sendTelegramNotification = useCallback(async (message: string) => {
     try {
-      // Use a unique identifier for the message content to prevent spam
-      const messageIdentifier = message.split('\n')[0]; // Use first line as identifier
+      const messageIdentifier = message.split('\n')[0];
       if (lastNotifiedActivityRef.current === messageIdentifier) return;
       lastNotifiedActivityRef.current = messageIdentifier;
-      
       await fetch("/api/telegram", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message }) });
     } catch (error) { console.error("Failed to send Telegram notification:", error) }
   }, []);
@@ -105,6 +102,18 @@ export default function SalahSync() {
   };
   const addMinutes = (date: Date, minutes: number): Date => new Date(date.getTime() + minutes * 60000);
   const subtractMinutes = (date: Date, minutes: number): Date => new Date(date.getTime() - minutes * 60000);
+
+  // --- THIS IS THE FIX ---
+  // Re-added the missing formatTimeUntil function
+  const formatTimeUntil = useCallback((targetTime: Date): string => {
+    const now = new Date();
+    let diff = targetTime.getTime() - now.getTime();
+    if (diff < 0) diff += 24 * 60 * 60 * 1000;
+    if (diff <= 0) return "";
+    const hours = Math.floor(diff / 3600000);
+    const minutes = Math.floor((diff % 3600000) / 60000);
+    return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+  }, []);
 
   const formatDowntimeTimeUntil = useCallback((startTime: Date, duration: number): string => {
       const now = new Date();
@@ -138,12 +147,10 @@ export default function SalahSync() {
     return null;
   }, [prayerTimes]);
   
-  // --- NEW LOGIC: Dedicated Grip Strength Timer ---
   useEffect(() => {
     if (!downtimeMode || !gripStrengthEnabled) {
       return;
     }
-
     const gripInterval = setInterval(() => {
       if (currentDowntimeActivity?.type === 'grip' || isPrayerTime()) {
         return;
@@ -152,7 +159,6 @@ export default function SalahSync() {
       if (!lastGripTime || now.getTime() - lastGripTime.getTime() >= 5 * 60 * 1000) {
         sendTelegramNotification("💪 Time for your 5-minute Grip Strength set!");
         playNotification();
-        
         if (currentDowntimeActivity && downtimeStartTime && activityTimer) {
           clearTimeout(activityTimer);
           setActivityTimer(null);
@@ -162,14 +168,12 @@ export default function SalahSync() {
             setPausedActivityTimer({ activity: currentDowntimeActivity, remainingTime });
           }
         }
-        
         setCurrentDowntimeActivity({ name: "Grip Strength Training", description: "Time for your grip strength set!", duration: 5, type: "grip" });
         setDowntimeStartTime(now);
-        setLastGripTime(now); // Set last grip time immediately to prevent re-triggering
+        setLastGripTime(now);
         localStorage.setItem("salah-sync-last-grip-time", now.toISOString());
       }
-    }, 60000); // Check every minute
-
+    }, 60000);
     return () => clearInterval(gripInterval);
   }, [downtimeMode, gripStrengthEnabled, lastGripTime, currentDowntimeActivity, downtimeStartTime, activityTimer, sendTelegramNotification, isPrayerTime]);
 
@@ -191,7 +195,6 @@ export default function SalahSync() {
     if (nightSleepMillis < 0) nightSleepMillis += 24 * 60 * 60 * 1000;
     const nightSleepMinutes = nightSleepMillis / 60000;
     const full8HoursSleep = nightSleepMinutes >= 480;
-
     const schedule: ScheduleItem[] = [];
     const ishaStart = ishaTime, ishaEndTime = addMinutes(ishaStart, DURATION.ISHA),
           writingStart = subtractMinutes(ishaStart, DURATION.WRITING),
@@ -260,13 +263,14 @@ export default function SalahSync() {
     schedule.push({ name: "Isha Prayer", description: "Night prayer (30 min)", startTime: ishaStart, endTime: ishaEndTime });
 
     const sortedSchedule = schedule.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
-    const nextIdx = sortedSchedule.findIndex((item) => item.startTime > now);
-    const currIdx = nextIdx === -1 || nextIdx === 0 ? sortedSchedule.length - 1 : nextIdx - 1;
+    let nextIdx = sortedSchedule.findIndex((item) => item.startTime > now);
+    if (nextIdx === -1) nextIdx = 0;
+    const currIdx = nextIdx === 0 ? sortedSchedule.length - 1 : nextIdx - 1;
     
     setCurrentActivity(sortedSchedule[currIdx]);
-    setNextActivity(sortedSchedule[nextIdx === -1 ? 0 : nextIdx].name);
-    setTimeUntilNext(formatTimeUntil(sortedSchedule[nextIdx === -1 ? 0 : nextIdx].startTime));
-  }, [prayerTimes]);
+    setNextActivity(sortedSchedule[nextIdx].name);
+    setTimeUntilNext(formatTimeUntil(sortedSchedule[nextIdx].startTime));
+  }, [prayerTimes, formatTimeUntil]);
 
   const startActivityTimer = useCallback((durationMinutes: number, onComplete: () => void) => {
     if (activityTimer) clearTimeout(activityTimer);
@@ -355,7 +359,7 @@ export default function SalahSync() {
     const newMode = !downtimeMode;
     setDowntimeMode(newMode);
     localStorage.setItem("salah-sync-downtime-mode", newMode.toString());
-    lastNotifiedActivityRef.current = ""; // Reset notification lock on mode switch
+    lastNotifiedActivityRef.current = "";
     if (!newMode) {
       setCurrentDowntimeActivity(null);
       setDowntimeStartTime(null);
