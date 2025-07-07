@@ -5,47 +5,48 @@ import { type NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
   try {
-    const { downtimeModeActive } = await request.json();
+    const body = await request.json();
+    const downtimeMode: boolean = body.downtimeMode;
 
-    if (downtimeModeActive === undefined) {
+    // Validate the input from the request
+    if (typeof downtimeMode !== "boolean") {
       return NextResponse.json(
-        { error: "Missing downtimeModeActive flag" },
+        { error: "Invalid 'downtimeMode' value provided. Must be a boolean." },
         { status: 400 },
       );
     }
 
     const userKey = "user_settings";
+    const userSettings = await kv.get<{
+      latitude: number;
+      longitude: number;
+      timezone: string;
+      lastNotifiedActivity: string;
+      downtimeMode?: boolean; // Make property optional
+    }>(userKey);
 
-    // Get existing settings to preserve them
-    const settings = await kv.get<any>(userKey);
-    if (!settings) {
+    if (!userSettings) {
       return NextResponse.json(
         { error: "User settings not found. Please set location first." },
         { status: 404 },
       );
     }
 
-    // Update the flag and reset last notified activity to ensure the next cron run sends a notification
-    await kv.set(userKey, {
-      ...settings,
-      downtimeModeActive,
-      lastNotifiedActivity: "", // Critical: forces re-notification
-      // Also reset downtime-specific state if we are turning it off
-      downtimeState: downtimeModeActive
-        ? settings.downtimeState || {
-            quranTurn: true,
-            lastGripTime: null,
-            lastActivityTime: null,
-          }
-        : undefined,
-    });
+    // Update the user settings with the new downtime mode state
+    await kv.set(userKey, { ...userSettings, downtimeMode: downtimeMode });
 
-    return NextResponse.json({ success: true, newMode: downtimeModeActive });
-  } catch (error) {
-    console.error("Error in downtime-toggle:", error);
-    return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 },
-    );
+    return NextResponse.json({ success: true, downtimeMode: downtimeMode });
+
+    // THIS IS THE FIX: Catch the error as 'unknown' instead of 'any'
+  } catch (error: unknown) {
+    console.error("Error in downtime-toggle API:", error);
+
+    // Now, we check if it's a standard Error object to safely access its message
+    let errorMessage = "An internal server error occurred.";
+    if (error instanceof Error) {
+      errorMessage = error.message;
+    }
+
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

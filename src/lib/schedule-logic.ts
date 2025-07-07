@@ -47,20 +47,38 @@ const WORKOUT_DURATIONS = {
   BARBELL: 45,
   COLD_SHOWER: 5,
 };
+// Add a description property to workout tasks as well, to satisfy the type.
 interface DailyWorkout {
   name: string;
-  components: { name: string; duration: number }[];
+  components: { name: string; description: string; duration: number }[];
 }
 
 function getWorkoutForDay(day: number): DailyWorkout {
   const calisthenics = [
-    { name: "Push-ups", duration: WORKOUT_DURATIONS.PUSH_UPS },
-    { name: "Sit-ups", duration: WORKOUT_DURATIONS.SIT_UPS },
-    { name: "Pull-ups", duration: WORKOUT_DURATIONS.PULL_UPS },
+    {
+      name: "Push-ups",
+      description: "Max reps push-ups.",
+      duration: WORKOUT_DURATIONS.PUSH_UPS,
+    },
+    {
+      name: "Sit-ups",
+      description: "Core conditioning.",
+      duration: WORKOUT_DURATIONS.SIT_UPS,
+    },
+    {
+      name: "Pull-ups",
+      description: "Max reps pull-ups.",
+      duration: WORKOUT_DURATIONS.PULL_UPS,
+    },
   ];
-  const running = { name: "Running", duration: WORKOUT_DURATIONS.RUN };
+  const running = {
+    name: "Running",
+    description: "30-minute cardio session.",
+    duration: WORKOUT_DURATIONS.RUN,
+  };
   const shower = {
     name: "Cold Shower",
+    description: "Post-workout recovery.",
     duration: WORKOUT_DURATIONS.COLD_SHOWER,
   };
 
@@ -69,7 +87,11 @@ function getWorkoutForDay(day: number): DailyWorkout {
       return {
         name: "Leg Day",
         components: [
-          { name: "Barbell Squats", duration: WORKOUT_DURATIONS.BARBELL },
+          {
+            name: "Barbell Squats",
+            description: "Heavy compound lift for legs.",
+            duration: WORKOUT_DURATIONS.BARBELL,
+          },
           ...calisthenics,
           running,
           shower,
@@ -79,7 +101,11 @@ function getWorkoutForDay(day: number): DailyWorkout {
       return {
         name: "Chest Day",
         components: [
-          { name: "Bench Press", duration: WORKOUT_DURATIONS.BARBELL },
+          {
+            name: "Bench Press",
+            description: "Heavy compound lift for chest.",
+            duration: WORKOUT_DURATIONS.BARBELL,
+          },
           ...calisthenics,
           running,
           shower,
@@ -89,7 +115,11 @@ function getWorkoutForDay(day: number): DailyWorkout {
       return {
         name: "Shoulder Day",
         components: [
-          { name: "Overhead Press", duration: WORKOUT_DURATIONS.BARBELL },
+          {
+            name: "Overhead Press",
+            description: "Heavy compound lift for shoulders.",
+            duration: WORKOUT_DURATIONS.BARBELL,
+          },
           ...calisthenics,
           running,
           shower,
@@ -99,7 +129,11 @@ function getWorkoutForDay(day: number): DailyWorkout {
       return {
         name: "Back Day",
         components: [
-          { name: "Deadlifts", duration: WORKOUT_DURATIONS.BARBELL },
+          {
+            name: "Deadlifts",
+            description: "Heavy compound lift for back.",
+            duration: WORKOUT_DURATIONS.BARBELL,
+          },
           ...calisthenics,
           running,
           shower,
@@ -285,7 +319,7 @@ export function calculateStrictSchedule(
     0,
     TARGET_SLEEP_HOURS * 60 - nightSleepMinutes,
   );
-  const needsNap = sleepDeficitMinutes > 15; // Only nap if deficit is significant
+  const needsNap = sleepDeficitMinutes > 15;
 
   const dailyWorkout = getWorkoutForDay(dayOfWeek);
   const meal1Data = getMealForDay(dayOfWeek, 1),
@@ -295,12 +329,9 @@ export function calculateStrictSchedule(
   const schedule: ScheduleItem[] = [];
   let ptr = actualWakeUpTime;
 
+  // FIX: The `morningTasks` array now contains items that all have a `description`.
   const morningTasks = [
-    {
-      name: meal1Data.name,
-      description: meal1Data.description,
-      duration: MEAL_DURATION,
-    },
+    { ...meal1Data, duration: MEAL_DURATION },
     ...dailyWorkout.components,
   ];
 
@@ -317,7 +348,8 @@ export function calculateStrictSchedule(
 
     if (taskEndTime <= fajrTime) {
       schedule.push({
-        ...task,
+        name: task.name,
+        description: task.description,
         startTime: taskStartTime,
         endTime: taskEndTime,
       });
@@ -352,7 +384,8 @@ export function calculateStrictSchedule(
       const newTaskStartTime = ptr;
       const newTaskEndTime = addMinutes(newTaskStartTime, task.duration);
       schedule.push({
-        ...task,
+        name: task.name,
+        description: task.description,
         startTime: newTaskStartTime,
         endTime: newTaskEndTime,
       });
