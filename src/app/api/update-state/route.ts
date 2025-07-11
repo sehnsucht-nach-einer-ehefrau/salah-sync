@@ -29,18 +29,26 @@ export async function POST(request: NextRequest) {
         quranTurn: true,
       },
     };
-    const now = new Date().toISOString();
+    const now = new Date();
 
     switch (action) {
       case "toggle_mode":
         updatedSettings.mode =
           settings.mode === "downtime" ? "strict" : "downtime";
 
+        // --- THIS IS THE CRITICAL FIX ---
+        // When entering downtime, we IMMEDIATELY set up the first activity.
+        // We don't wait for the slow cron job.
         if (updatedSettings.mode === "downtime") {
-          updatedSettings.downtime.currentActivity = "Starting...";
-          updatedSettings.downtime.lastNotifiedActivity = "";
+          const firstActivity = updatedSettings.downtime.quranTurn
+            ? "Quran Reading"
+            : "LeetCode Session";
+
+          updatedSettings.downtime.currentActivity = firstActivity;
+          updatedSettings.downtime.activityStartTime = now.toISOString();
+          updatedSettings.downtime.lastNotifiedActivity = ""; // Clear this to ensure the cron job sends a notification
         } else {
-          updatedSettings.lastNotifiedActivity = "";
+          updatedSettings.lastNotifiedActivity = ""; // Reset strict mode notification
         }
         break;
 
@@ -55,7 +63,8 @@ export async function POST(request: NextRequest) {
         break;
 
       case "complete_grip":
-        updatedSettings.downtime.lastGripTime = now;
+        updatedSettings.downtime.lastGripTime = now.toISOString();
+        // Set state to "Starting..." so the cron job knows to resume the main loop
         updatedSettings.downtime.currentActivity = "Starting...";
         updatedSettings.downtime.lastNotifiedActivity =
           "Grip Strength Training";
@@ -66,6 +75,7 @@ export async function POST(request: NextRequest) {
     }
 
     await kv.set(userKey, updatedSettings);
+    // We still return the settings so the client can sync, but now the state is already correct.
     return NextResponse.json({ success: true, settings: updatedSettings });
   } catch (error) {
     console.error("Error in update-state:", error);

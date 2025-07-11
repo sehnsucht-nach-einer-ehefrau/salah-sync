@@ -83,16 +83,18 @@ export async function GET(request: NextRequest) {
     let newActivityDescription = "";
     const updatedDowntimeState = { ...downtime };
 
-    const needsKickstart =
-      !downtime.activityStartTime ||
-      !downtime.currentActivity ||
-      downtime.currentActivity === "Starting...";
+    // This logic now acts as a failsafe or resumes activity after a grip set.
+    const needsResume = downtime.currentActivity === "Starting...";
 
     if (downtime.gripStrengthEnabled) {
       const lastGrip = downtime.lastGripTime
         ? new Date(downtime.lastGripTime)
         : null;
-      if (!lastGrip || now.getTime() - lastGrip.getTime() >= 5 * 60 * 1000) {
+      // Prevent grip notification if a grip set was just completed.
+      if (
+        downtime.currentActivity !== "Grip Strength Training" &&
+        (!lastGrip || now.getTime() - lastGrip.getTime() >= 5 * 60 * 1000)
+      ) {
         newActivityName = "Grip Strength Training";
         newActivityDescription = "Time for your 5-minute grip set!";
       }
@@ -102,9 +104,9 @@ export async function GET(request: NextRequest) {
       const activityStartTime = downtime.activityStartTime
         ? new Date(downtime.activityStartTime)
         : null;
-      let switchActivity = needsKickstart;
+      let switchActivity = needsResume;
 
-      if (activityStartTime && !needsKickstart) {
+      if (activityStartTime && !needsResume) {
         const minutesPassed =
           (now.getTime() - activityStartTime.getTime()) / 60000;
         if (minutesPassed >= 30) {

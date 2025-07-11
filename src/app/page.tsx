@@ -45,12 +45,14 @@ export default function SalahSync() {
 
   const syncWithServer = useCallback(async () => {
     try {
+      setLoading(true);
       const response = await fetch('/api/get-settings');
       if (!response.ok) {
         if (response.status === 404) {
           console.log("Settings not found, awaiting setup.");
           const savedLocationJSON = localStorage.getItem("salah-sync-location");
           if (savedLocationJSON) setLocation(JSON.parse(savedLocationJSON));
+          setLoading(false);
           return;
         }
         throw new Error(`Failed to get settings: ${response.statusText}`);
