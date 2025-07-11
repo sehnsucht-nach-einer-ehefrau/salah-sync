@@ -3,7 +3,7 @@
 import { toZonedTime } from "date-fns-tz";
 
 // =================================================================
-//  INTERFACES
+//  INTERFACES & TYPES
 // =================================================================
 
 export interface PrayerTimes {
@@ -12,6 +12,7 @@ export interface PrayerTimes {
   Asr: string;
   Maghrib: string;
   Isha: string;
+  Sunrise: string;
 }
 export interface ScheduleItem {
   name: string;
@@ -19,24 +20,37 @@ export interface ScheduleItem {
   startTime: Date;
   endTime: Date;
 }
+export type MealMode = "bulking" | "maintenance" | "cutting";
+
+// Added a shared UserSettings type for type safety across the app
+export interface UserSettings {
+  latitude: number;
+  longitude: number;
+  timezone: string;
+  mode: "strict" | "downtime";
+  mealMode: MealMode;
+  lastNotifiedActivity: string;
+  downtime: {
+    lastNotifiedActivity: string;
+    currentActivity: string;
+    activityStartTime: string | null;
+    lastGripTime: string | null;
+    gripStrengthEnabled: boolean;
+    quranTurn: boolean;
+  };
+}
 
 // =================================================================
 //  DATE & TIME HELPERS
 // =================================================================
 
-export const parseTime = (timeString: string, timezone: string): Date => {
-  const [hours, minutes] = timeString.split(":").map(Number);
-  const zonedDate = toZonedTime(new Date(), timezone);
-  zonedDate.setHours(hours, minutes, 0, 0);
-  return zonedDate;
-};
 export const addMinutes = (date: Date, minutes: number): Date =>
   new Date(date.getTime() + minutes * 60000);
 export const subtractMinutes = (date: Date, minutes: number): Date =>
   new Date(date.getTime() - minutes * 60000);
 
 // =================================================================
-//  Meal and Workout Data Helpers
+//  MEAL & WORKOUT DATA
 // =================================================================
 
 const WORKOUT_DURATIONS = {
@@ -45,79 +59,83 @@ const WORKOUT_DURATIONS = {
   PULL_UPS: 10,
   RUN: 30,
   BARBELL: 45,
+  MUAY_THAI: 60,
+  ACTIVE_RECOVERY: 45,
   COLD_SHOWER: 5,
 };
-// Add a description property to workout tasks as well, to satisfy the type.
 interface DailyWorkout {
   name: string;
-  components: { name: string; description: string; duration: number }[];
+  components: { name: string; duration: number }[];
 }
 
 function getWorkoutForDay(day: number): DailyWorkout {
   const calisthenics = [
-    {
-      name: "Push-ups",
-      description: "Max reps push-ups.",
-      duration: WORKOUT_DURATIONS.PUSH_UPS,
-    },
-    {
-      name: "Sit-ups",
-      description: "Core conditioning.",
-      duration: WORKOUT_DURATIONS.SIT_UPS,
-    },
-    {
-      name: "Pull-ups",
-      description: "Max reps pull-ups.",
-      duration: WORKOUT_DURATIONS.PULL_UPS,
-    },
+    { name: "Max Rep Push-ups", duration: WORKOUT_DURATIONS.PUSH_UPS },
+    { name: "Max Rep Sit-ups", duration: WORKOUT_DURATIONS.SIT_UPS },
+    { name: "Max Rep Pull-ups", duration: WORKOUT_DURATIONS.PULL_UPS },
   ];
-  const running = {
-    name: "Running",
-    description: "30-minute cardio session.",
-    duration: WORKOUT_DURATIONS.RUN,
-  };
+  const running = { name: "Running", duration: WORKOUT_DURATIONS.RUN };
   const shower = {
-    name: "Cold Shower",
-    description: "Post-workout recovery.",
+    name: "Optional Cold Shower",
     duration: WORKOUT_DURATIONS.COLD_SHOWER,
   };
 
   switch (day) {
     case 1:
       return {
-        name: "Leg Day",
+        name: "Push Day",
         components: [
           {
-            name: "Barbell Squats",
-            description: "Heavy compound lift for legs.",
+            name: "Bench Press (4x6), Dips (3x12), Incline DB (3x8)",
             duration: WORKOUT_DURATIONS.BARBELL,
           },
           ...calisthenics,
+          running,
+          shower,
+        ],
+      };
+    case 2:
+      return {
+        name: "Muay Thai Conditioning",
+        components: [
+          {
+            name: "Shadowboxing, Heavy Bag, Core",
+            duration: WORKOUT_DURATIONS.MUAY_THAI,
+          },
           running,
           shower,
         ],
       };
     case 3:
       return {
-        name: "Chest Day",
+        name: "Leg Day",
         components: [
           {
-            name: "Bench Press",
-            description: "Heavy compound lift for chest.",
+            name: "Barbell Squats (4x8), RDL (3x10), Lunges (3x20)",
             duration: WORKOUT_DURATIONS.BARBELL,
           },
           ...calisthenics,
           running,
+          shower,
+        ],
+      };
+    case 4:
+      return {
+        name: "Active Recovery",
+        components: [
+          {
+            name: "Light Run & Mobility",
+            duration: WORKOUT_DURATIONS.ACTIVE_RECOVERY,
+          },
           shower,
         ],
       };
     case 5:
       return {
-        name: "Shoulder Day",
+        name: "Pull Day",
         components: [
           {
-            name: "Overhead Press",
-            description: "Heavy compound lift for shoulders.",
+            name: "Deadlift (4x5), Rows (3x10), Chin-ups (3xAMRAP)",
             duration: WORKOUT_DURATIONS.BARBELL,
           },
           ...calisthenics,
@@ -125,13 +143,23 @@ function getWorkoutForDay(day: number): DailyWorkout {
           shower,
         ],
       };
-    case 0:
+    case 6:
       return {
-        name: "Back Day",
+        name: "Muay Thai & Core",
         components: [
           {
-            name: "Deadlifts",
-            description: "Heavy compound lift for back.",
+            name: "Bag Work, Partner Drills, Core Circuit",
+            duration: WORKOUT_DURATIONS.MUAY_THAI,
+          },
+          shower,
+        ],
+      };
+    case 0:
+      return {
+        name: "Shoulder Day",
+        components: [
+          {
+            name: "Overhead Press (4x8), Lateral Raises (3x12), Rear Delts (3x15)",
             duration: WORKOUT_DURATIONS.BARBELL,
           },
           ...calisthenics,
@@ -147,138 +175,93 @@ function getWorkoutForDay(day: number): DailyWorkout {
   }
 }
 
-function getMealForDay(
+function getMealPlan(
   day: number,
-  mealNumber: 1 | 2 | 3,
-): { name: string; description: string } {
+  mode: MealMode,
+): { meal1: string; meal2: string; meal3: string } {
+  const basePortions = {
+    bulking: { meat: "8oz", fat: "2 tbsp", carbs: "1 cup" },
+    maintenance: { meat: "6oz", fat: "1.5 tbsp", carbs: "0.75 cup" },
+    cutting: {
+      meat: "4-6oz",
+      fat: "1 tbsp",
+      carbs: "0.5 cup (or none at dinner)",
+    },
+  };
+  const p = basePortions[mode];
+
   const weeklyMenu = [
+    // 0: Sunday (Shoulder Day)
     {
-      1: {
-        name: "Breakfast",
-        description:
-          "Oat Pancake (1/2 cup oats + 1 egg) with 3 whole eggs (soft yolk) and 1/2 avocado.\nGlass of whole milk, 1 banana, and 2 Brazil nuts.",
-      },
-      2: {
-        name: "Lunch",
-        description:
-          "6oz halal ground beef, 1 cup cooked rice, sautéed spinach (olive oil + garlic).\nSide: 1/2 avocado, 1/2 cup full-fat Greek yogurt with honey.",
-      },
-      3: {
-        name: "Dinner",
-        description:
-          "6oz wild-caught salmon, 1/2 cup cooked quinoa, large spinach salad with olive oil dressing.",
-      },
+      meal1: `Protein pancakes (egg, whey, oats), berries, 2 Brazil nuts`,
+      meal2: `Slow-cooked beef stew with carrots & potatoes (${p.carbs})`,
+      meal3: `${p.meat} grilled chicken breast with full-fat Greek yogurt & honey`,
     },
+    // 1: Monday (Push Day)
     {
-      1: {
-        name: "Breakfast",
-        description:
-          "Oat Pancake (1/2 cup oats + 1 egg) with 3 sunny side up eggs and 1/2 avocado.\nWhole milk + 2 Brazil nuts, 1/4 cup blueberries.",
-      },
-      2: {
-        name: "Lunch",
-        description:
-          "8oz halal ground beef (80/20) over white rice, cooked in beef tallow.\nSide: pickled cucumber + 1/2 avocado.",
-      },
-      3: {
-        name: "Dinner",
-        description:
-          "Cottage cheese with honey and berries.\nGlass of kefir or yogurt-based drink.",
-      },
+      meal1: `4 scrambled eggs (beef tallow), avocado, raw milk`,
+      meal2: `${p.meat} grass-fed steak, 1 sweet potato with ghee, side of sauerkraut`,
+      meal3: `6oz wild-caught salmon, quinoa (${p.carbs}), large spinach salad (${p.fat} olive oil)`,
     },
+    // 2: Tuesday (Muay Thai)
     {
-      1: {
-        name: "Breakfast",
-        description:
-          "Oat Pancake (1/2 cup oats + 1 egg) with 3 whole eggs and 1/2 avocado.\nGreek yogurt bowl with banana, cinnamon, and 2 Brazil nuts.",
-      },
-      2: {
-        name: "Lunch",
-        description:
-          "8oz chicken thighs (pan-fried), 1 cup basmati rice, steamed broccoli with olive oil.",
-      },
-      3: {
-        name: "Dinner",
-        description:
-          "6oz cod, roasted asparagus, 1/2 cup cooked lentils with cumin.",
-      },
+      meal1: `Greek yogurt, whey, berries, almonds`,
+      meal2: `${p.meat} halal ground beef, white rice (${p.carbs}, beef tallow), pickled cucumber`,
+      meal3: `Cottage cheese, fruit, honey, glass of kefir`,
     },
+    // 3: Wednesday (Leg Day)
     {
-      1: {
-        name: "Breakfast",
-        description:
-          "3 soft-boiled eggs, Greek yogurt + berries, oat pancake (as usual), 1/2 avocado, 2 Brazil nuts.",
-      },
-      2: {
-        name: "Lunch",
-        description:
-          "8oz sirloin steak with large mixed greens salad (olive oil, lemon).",
-      },
-      3: {
-        name: "Dinner",
-        description: "8oz ground turkey, black beans, corn salsa, 1/2 avocado.",
-      },
+      meal1: `4 eggs in ghee, onions, peppers, sourdough`,
+      meal2: `${p.meat} chicken thighs, basmati rice (${p.carbs}), steamed broccoli`,
+      meal3: `6oz cod, roasted asparagus, lentils`,
     },
+    // 4: Thursday (Active Recovery)
     {
-      1: {
-        name: "Breakfast",
-        description:
-          "3 fried eggs, 1/2 avocado, 1 oat pancake, 2 Brazil nuts, whole milk.",
-      },
-      2: {
-        name: "Lunch",
-        description:
-          "3 grilled lamb chops, 1/2 cup couscous, grilled zucchini with olive oil.",
-      },
-      3: {
-        name: "Dinner",
-        description:
-          "Chicken + vegetable soup (carrots, celery, onion, chicken), 1 slice sourdough bread.",
-      },
+      meal1: `Smoothie: whey, spinach, banana, almond butter, milk`,
+      meal2: `Protein oats (milk, whey, walnuts)`,
+      meal3: `Large bowl chicken & vegetable soup`,
     },
+    // 5: Friday (Pull Day)
     {
-      1: {
-        name: "Breakfast",
-        description:
-          "3 eggs (scrambled), Greek yogurt smoothie with banana and peanut butter, oat pancake, 2 Brazil nuts.",
-      },
-      2: {
-        name: "Lunch",
-        description:
-          "Quinoa bowl: shredded chicken, chickpeas, cucumber, tahini drizzle.",
-      },
-      3: {
-        name: "Dinner",
-        description: "8oz baked salmon, roasted potatoes, sautéed green beans.",
-      },
+      meal1: `Beef sausage, 3 fried eggs, fermented pickles, 1oz beef liver (optional)`,
+      meal2: `3 lamb chops, couscous (${p.carbs}), grilled zucchini`,
+      meal3: `Quinoa bowl with shredded chicken, chickpeas, tahini (${p.fat})`,
     },
+    // 6: Saturday (Muay Thai)
     {
-      1: {
-        name: "Breakfast",
-        description:
-          "3 sunny side up eggs, oat pancake, full-fat yogurt, 2 Brazil nuts, 1 banana.",
-      },
-      2: {
-        name: "Lunch",
-        description:
-          "Beef stew (8oz beef, carrots, potatoes, onion), slow cooked.",
-      },
-      3: {
-        name: "Dinner",
-        description:
-          "8oz grilled chicken breast, 1/2 cup Greek yogurt with honey, mixed greens salad.",
-      },
+      meal1: `${p.meat} sirloin steak & 2 eggs`,
+      meal2: `${p.meat} ground turkey, black beans, avocado, corn salsa`,
+      meal3: `8oz baked salmon, roasted potatoes, green beans`,
     },
   ];
-  return weeklyMenu[day][mealNumber];
+  return weeklyMenu[day];
 }
 
-// =================================================================
-//  THE CORE SCHEDULING ENGINE
-// =================================================================
-export function calculateStrictSchedule(
+function getTahajjud(
+  availableMinutes: number,
+): { name: string; duration: number } | null {
+  if (availableMinutes >= 30)
+    return { name: "Tahajjud (12 Rakaat)", duration: 30 };
+  if (availableMinutes >= 20)
+    return { name: "Tahajjud (8 Rakaat)", duration: 20 };
+  if (availableMinutes >= 10)
+    return { name: "Tahajjud (4 Rakaat)", duration: 10 };
+  if (availableMinutes >= 5)
+    return { name: "Tahajjud (2 Rakaat)", duration: 5 };
+  return null;
+}
+
+export const parseTime = (timeString: string, timezone: string): Date => {
+  const [hours, minutes] = timeString.split(":").map(Number);
+  const zonedDate = toZonedTime(new Date(), timezone);
+  zonedDate.setHours(hours, minutes, 0, 0);
+  return zonedDate;
+};
+
+export function calculateSchedule(
   prayerTimes: PrayerTimes,
   timezone: string,
+  mode: MealMode,
 ): { current: ScheduleItem; next: ScheduleItem } {
   const now = toZonedTime(new Date(), timezone);
   const dayOfWeek = now.getDay();
@@ -291,25 +274,22 @@ export function calculateStrictSchedule(
     ISHA: 30,
   };
   const MEAL_DURATION = 30,
-    TAHAJJUD_DURATION = 30,
     TARGET_SLEEP_HOURS = 9;
 
   const fajrTime = parseTime(prayerTimes.Fajr, timezone),
     dhuhrTime = parseTime(prayerTimes.Dhuhr, timezone),
     asrTime = parseTime(prayerTimes.Asr, timezone),
     maghribTime = parseTime(prayerTimes.Maghrib, timezone),
-    ishaTime = parseTime(prayerTimes.Isha, timezone);
-  const ishaEndTime = addMinutes(ishaTime, PRAYER_DURATIONS.ISHA),
-    fajrEndTime = addMinutes(fajrTime, PRAYER_DURATIONS.FAJR),
-    dhuhrEndTime = addMinutes(dhuhrTime, PRAYER_DURATIONS.DHUHR),
-    maghribEndTime = addMinutes(maghribTime, PRAYER_DURATIONS.MAGHRIB);
+    ishaTime = parseTime(prayerTimes.Isha, timezone),
+    sunriseTime = parseTime(prayerTimes.Sunrise, timezone);
+  const fajrCutoff = subtractMinutes(sunriseTime, 10);
 
-  const tahajjudLatestStartTime = subtractMinutes(fajrTime, 60);
-  const idealWakeUpTime = addMinutes(ishaEndTime, TARGET_SLEEP_HOURS * 60);
+  const ishaEndTime = addMinutes(ishaTime, PRAYER_DURATIONS.ISHA);
+  const sleepWindowEnd = fajrCutoff;
+
+  const nineHourWakeup = addMinutes(ishaEndTime, TARGET_SLEEP_HOURS * 60);
   const actualWakeUpTime =
-    idealWakeUpTime > tahajjudLatestStartTime
-      ? tahajjudLatestStartTime
-      : idealWakeUpTime;
+    nineHourWakeup < sleepWindowEnd ? nineHourWakeup : sleepWindowEnd;
 
   let nightSleepMillis = actualWakeUpTime.getTime() - ishaEndTime.getTime();
   if (nightSleepMillis < 0) nightSleepMillis += 24 * 60 * 60 * 1000;
@@ -321,146 +301,143 @@ export function calculateStrictSchedule(
   );
   const needsNap = sleepDeficitMinutes > 15;
 
+  const timeBeforeFajr =
+    (fajrTime.getTime() - actualWakeUpTime.getTime()) / 60000;
+  const tahajjud = getTahajjud(timeBeforeFajr);
+
   const dailyWorkout = getWorkoutForDay(dayOfWeek);
-  const meal1Data = getMealForDay(dayOfWeek, 1),
-    meal2Data = getMealForDay(dayOfWeek, 2),
-    meal3Data = getMealForDay(dayOfWeek, 3);
+  const meals = getMealPlan(dayOfWeek, mode);
 
   const schedule: ScheduleItem[] = [];
   let ptr = actualWakeUpTime;
 
-  // FIX: The `morningTasks` array now contains items that all have a `description`.
-  const morningTasks = [
-    { ...meal1Data, duration: MEAL_DURATION },
-    ...dailyWorkout.components,
-  ];
-
-  schedule.push({
-    name: "Tahajjud",
-    description: "Connect with Allah in the blessed hours.",
-    startTime: ptr,
-    endTime: (ptr = addMinutes(ptr, TAHAJJUD_DURATION)),
-  });
-
-  for (const task of morningTasks) {
-    const taskStartTime = ptr;
-    const taskEndTime = addMinutes(taskStartTime, task.duration);
-
-    if (taskEndTime <= fajrTime) {
-      schedule.push({
-        name: task.name,
-        description: task.description,
-        startTime: taskStartTime,
-        endTime: taskEndTime,
-      });
-      ptr = taskEndTime;
-    } else if (taskStartTime < fajrTime) {
-      const durationBeforeFajr =
-        (fajrTime.getTime() - taskStartTime.getTime()) / 60000;
-      if (durationBeforeFajr > 1)
-        schedule.push({
-          name: `${task.name} (Part 1)`,
-          description: task.description,
-          startTime: taskStartTime,
-          endTime: fajrTime,
-        });
-      schedule.push({
-        name: "Fajr Prayer",
-        description: "Dawn prayer.",
-        startTime: fajrTime,
-        endTime: fajrEndTime,
-      });
-      const durationAfterFajr = task.duration - durationBeforeFajr;
-      if (durationAfterFajr > 1)
-        schedule.push({
-          name: `${task.name} (Part 2)`,
-          description: task.description,
-          startTime: fajrEndTime,
-          endTime: addMinutes(fajrEndTime, durationAfterFajr),
-        });
-      ptr = addMinutes(fajrEndTime, durationAfterFajr);
-    } else {
-      ptr = new Date(Math.max(ptr.getTime(), fajrEndTime.getTime()));
-      const newTaskStartTime = ptr;
-      const newTaskEndTime = addMinutes(newTaskStartTime, task.duration);
-      schedule.push({
-        name: task.name,
-        description: task.description,
-        startTime: newTaskStartTime,
-        endTime: newTaskEndTime,
-      });
-      ptr = newTaskEndTime;
-    }
+  if (tahajjud) {
+    schedule.push({
+      name: tahajjud.name,
+      description: "Night prayer for spiritual connection.",
+      startTime: ptr,
+      endTime: (ptr = addMinutes(ptr, tahajjud.duration)),
+    });
   }
 
-  ptr = new Date(Math.max(ptr.getTime(), fajrEndTime.getTime()));
+  const timeForPreFajrWork = (fajrTime.getTime() - ptr.getTime()) / 60000;
+  if (timeForPreFajrWork > 15) {
+    schedule.push({
+      name: "Quran Study / Deep Work",
+      description: "Focused pre-dawn session.",
+      startTime: ptr,
+      endTime: fajrTime,
+    });
+  }
 
   schedule.push({
-    name: "Deep Work & Responsibilities",
-    description: "Focused work sessions, studies, and life duties.",
+    name: "Fajr Prayer",
+    description: "Dawn prayer before sunrise.",
+    startTime: fajrTime,
+    endTime: (ptr = addMinutes(fajrTime, PRAYER_DURATIONS.FAJR)),
+  });
+
+  for (const component of dailyWorkout.components) {
+    schedule.push({
+      name: component.name,
+      description: dailyWorkout.name,
+      startTime: ptr,
+      endTime: (ptr = addMinutes(ptr, component.duration)),
+    });
+  }
+
+  schedule.push({
+    name: "Meal 1 (Sunlight & Quran)",
+    description: meals.meal1,
     startTime: ptr,
+    endTime: (ptr = addMinutes(ptr, MEAL_DURATION)),
+  });
+  schedule.push({
+    name: "Deep Work Block 1",
+    description: "First focused work session of the day.",
+    startTime: ptr,
+    endTime: subtractMinutes(dhuhrTime, 30),
+  });
+  schedule.push({
+    name: "Nafl (Duha Prayer)",
+    description: "Mid-morning voluntary prayer.",
+    startTime: subtractMinutes(dhuhrTime, 30),
     endTime: dhuhrTime,
   });
+
   schedule.push({
     name: "Dhuhr Prayer",
     description: "Midday prayer.",
     startTime: dhuhrTime,
-    endTime: (ptr = dhuhrEndTime),
+    endTime: (ptr = addMinutes(dhuhrTime, PRAYER_DURATIONS.DHUHR)),
   });
 
   if (needsNap) {
     schedule.push({
-      name: "Recharge Nap",
-      description: `Making up for sleep deficit (${sleepDeficitMinutes.toFixed(0)} min).`,
+      name: "Qailulah Nap",
+      description: `Recharging for ${sleepDeficitMinutes.toFixed(0)} minutes.`,
       startTime: ptr,
       endTime: (ptr = addMinutes(ptr, sleepDeficitMinutes)),
     });
   }
 
   schedule.push({
-    name: meal2Data.name,
-    description: meal2Data.description,
+    name: "Meal 2 (Anabolic)",
+    description: meals.meal2,
     startTime: ptr,
     endTime: (ptr = addMinutes(ptr, MEAL_DURATION)),
   });
   schedule.push({
-    name: "Responsibilities",
-    description: "Afternoon duties and tasks.",
+    name: "Post-lunch Nafl",
+    description: "Optional voluntary prayer.",
+    startTime: ptr,
+    endTime: (ptr = addMinutes(ptr, 10)),
+  });
+  schedule.push({
+    name: "Deep Work Block 2",
+    description: "Post-nap focused session.",
     startTime: ptr,
     endTime: asrTime,
   });
+
   schedule.push({
     name: "Asr Prayer",
     description: "Afternoon prayer.",
     startTime: asrTime,
     endTime: (ptr = addMinutes(asrTime, PRAYER_DURATIONS.ASR)),
   });
-
   schedule.push({
-    name: "Responsibilities",
-    description: "Pre-sunset tasks and wind-down.",
+    name: "Deep Work Block 3",
+    description: "Final work session before sunset.",
     startTime: ptr,
     endTime: maghribTime,
   });
+
   schedule.push({
     name: "Maghrib Prayer",
     description: "Sunset prayer.",
     startTime: maghribTime,
-    endTime: (ptr = maghribEndTime),
+    endTime: (ptr = addMinutes(maghribTime, PRAYER_DURATIONS.MAGHRIB)),
   });
-
   schedule.push({
-    name: meal3Data.name,
-    description: meal3Data.description,
+    name: "Meal 3 (Dinner)",
+    description: meals.meal3,
     startTime: ptr,
     endTime: (ptr = addMinutes(ptr, MEAL_DURATION)),
   });
   schedule.push({
-    name: "Screen Shutdown & Wind Down",
-    description: "No screens. Prepare for sleep, read, reflect.",
+    name: "Final Deep Work / Reflection",
+    description: "Journaling, planning, light reading.",
     startTime: ptr,
+    endTime: subtractMinutes(ishaTime, 60),
+  });
+  schedule.push({
+    name: "Cooldown Hour (No Screens)",
+    description: "Dim lights, mobility, prepare for sleep.",
+    startTime: subtractMinutes(ishaTime, 60),
     endTime: ishaTime,
   });
+
   schedule.push({
     name: "Isha Prayer",
     description: "Night prayer.",
@@ -469,7 +446,7 @@ export function calculateStrictSchedule(
   });
   schedule.push({
     name: "Sleep",
-    description: `Target: ${TARGET_SLEEP_HOURS} hours.`,
+    description: `Target: ${TARGET_SLEEP_HOURS} hours of restorative sleep.`,
     startTime: ishaEndTime,
     endTime: actualWakeUpTime,
   });

@@ -2,10 +2,28 @@
 
 import { kv } from "@vercel/kv";
 import { type NextRequest, NextResponse } from "next/server";
-// Import the shared logic from the new file
-import { calculateStrictSchedule, PrayerTimes } from "@/lib/schedule-logic";
+import {
+  calculateSchedule,
+  PrayerTimes,
+  UserSettings,
+} from "@/lib/schedule-logic";
+import { toZonedTime } from "date-fns-tz";
 
-// Main Cron Job Handler
+async function sendTelegram(message: string) {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!botToken || !chatId) return;
+  await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: message,
+      parse_mode: "HTML",
+    }),
+  });
+}
+
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -13,72 +31,109 @@ export async function GET(request: NextRequest) {
   }
 
   const userKey = "user_settings";
-  const userSettings = await kv.get<{
-    latitude: number;
-    longitude: number;
-    timezone: string;
-    lastNotifiedActivity: string;
-  }>(userKey);
-
-  if (!userSettings?.latitude || !userSettings?.timezone) {
-    return NextResponse.json({
-      message: "User location/timezone not set up. Skipping.",
-    });
+  const settings = await kv.get<UserSettings>(userKey);
+  if (!settings?.latitude || !settings?.timezone) {
+    return NextResponse.json({ message: "User settings not configured." });
   }
 
-  const today = new Date();
-  const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}?latitude=${userSettings.latitude}&longitude=${userSettings.longitude}&method=2`;
+  const now = new Date();
 
-  try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error("Failed to fetch prayer times");
+  if (settings.mode === "strict" || !settings.mode) {
+    const nowZoned = toZonedTime(now, settings.timezone);
+    const prayerTimesResponse = await fetch(
+      `https://api.aladhan.com/v1/timings/${nowZoned.getDate()}-${nowZoned.getMonth() + 1}-${nowZoned.getFullYear()}?latitude=${settings.latitude}&longitude=${settings.longitude}&method=2`,
+    );
+    const prayerData = await prayerTimesResponse.json();
+    const prayerTimes: PrayerTimes = prayerData.data?.timings;
+    if (!prayerTimes)
+      return NextResponse.json({
+        error: "Failed to get prayer times for strict mode.",
+      });
 
-    const data = await response.json();
-    const prayerTimes: PrayerTimes = data.data?.timings;
-    if (!prayerTimes) throw new Error("Invalid prayer times data");
-
-    // Use the single source of truth for scheduling
-    const { current } = calculateStrictSchedule(
+    const { current } = calculateSchedule(
       prayerTimes,
-      userSettings.timezone,
+      settings.timezone,
+      settings.mealMode || "maintenance",
     );
 
-    // The rest of the notification logic remains the same
     if (
-      current.name !== userSettings.lastNotifiedActivity &&
+      current.name !== settings.lastNotifiedActivity &&
       current.name !== "Transition"
     ) {
-      const message = `🕐 <b>${current.name}</b>\n${current.description}`;
-
-      const botToken = process.env.TELEGRAM_BOT_TOKEN;
-      const chatId = process.env.TELEGRAM_CHAT_ID;
-      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: message,
-          parse_mode: "HTML",
-        }),
-      });
-
+      await sendTelegram(`🕐 <b>${current.name}</b>\n${current.description}`);
       await kv.set(userKey, {
-        ...userSettings,
+        ...settings,
         lastNotifiedActivity: current.name,
       });
-
       return NextResponse.json({
         status: "notified",
         new_activity: current.name,
       });
-    } else {
-      return NextResponse.json({ status: "no-change", activity: current.name });
     }
-  } catch (error) {
-    console.error("Cron job execution error:", error);
-    return NextResponse.json(
-      { error: (error as Error).message },
-      { status: 500 },
-    );
+    return NextResponse.json({ status: "no-change", activity: current.name });
   }
+
+  if (settings.mode === "downtime") {
+    const downtime = settings.downtime || {};
+    let newActivityName: string | null = null;
+    let newActivityDescription = "";
+    const updatedDowntimeState = { ...downtime };
+
+    if (downtime.gripStrengthEnabled) {
+      const lastGrip = downtime.lastGripTime
+        ? new Date(downtime.lastGripTime)
+        : null;
+      if (!lastGrip || now.getTime() - lastGrip.getTime() >= 5 * 60 * 1000) {
+        newActivityName = "Grip Strength Training";
+        newActivityDescription = "Time for your 5-minute grip set!";
+        updatedDowntimeState.lastGripTime = now.toISOString();
+      }
+    }
+
+    if (!newActivityName) {
+      const activityStartTime = downtime.activityStartTime
+        ? new Date(downtime.activityStartTime)
+        : null;
+      let switchActivity =
+        !activityStartTime ||
+        !downtime.currentActivity ||
+        downtime.currentActivity === "Starting...";
+      if (activityStartTime) {
+        const minutesPassed =
+          (now.getTime() - activityStartTime.getTime()) / 60000;
+        if (minutesPassed >= 30) {
+          switchActivity = true;
+          updatedDowntimeState.quranTurn = !downtime.quranTurn;
+        }
+      }
+
+      if (switchActivity) {
+        updatedDowntimeState.activityStartTime = now.toISOString();
+        newActivityName = updatedDowntimeState.quranTurn
+          ? "Quran Reading"
+          : "LeetCode Session";
+        newActivityDescription = `Starting 30-minute session: ${newActivityName}.`;
+      }
+    }
+
+    if (newActivityName && newActivityName !== downtime.lastNotifiedActivity) {
+      await sendTelegram(
+        `💪 <b>${newActivityName}</b>\n${newActivityDescription}`,
+      );
+      updatedDowntimeState.lastNotifiedActivity = newActivityName;
+      updatedDowntimeState.currentActivity = newActivityName;
+      await kv.set(userKey, { ...settings, downtime: updatedDowntimeState });
+      return NextResponse.json({
+        status: "notified (downtime)",
+        new_activity: newActivityName,
+      });
+    }
+
+    return NextResponse.json({
+      status: "no-change (downtime)",
+      activity: downtime.currentActivity,
+    });
+  }
+
+  return NextResponse.json({ error: "Unknown mode" }, { status: 500 });
 }
