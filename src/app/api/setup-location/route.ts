@@ -2,40 +2,61 @@
 
 import { kv } from "@vercel/kv";
 import { type NextRequest, NextResponse } from "next/server";
+import { UserSettings } from "@/lib/schedule-logic";
+
+// Type guard to check if an object conforms to the UserSettings interface
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function isUserSettings(obj: any): obj is UserSettings {
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    typeof obj.latitude === "number" &&
+    typeof obj.longitude === "number" &&
+    typeof obj.timezone === "string" &&
+    typeof obj.city === "string" &&
+    obj.mode === "strict" &&
+    ["bulking", "maintenance", "cutting"].includes(obj.mealMode) &&
+    typeof obj.downtime === "object" &&
+    obj.downtime !== null &&
+    typeof obj.downtime.gripStrengthEnabled === "boolean" &&
+    typeof obj.downtime.quranTurn === "boolean"
+  );
+}
 
 export async function POST(request: NextRequest) {
   try {
-    // CHANGE 1: Destructure timezone from the body
-    const { latitude, longitude, city, timezone } = await request.json();
+    const body = await request.json();
 
-    if (
-      latitude === undefined ||
-      longitude === undefined ||
-      timezone === undefined // Add a check for timezone
-    ) {
-      return NextResponse.json(
-        { error: "Missing latitude, longitude, or timezone" },
-        { status: 400 },
-      );
+    // Create a complete, default UserSettings object
+    const initialSettings: UserSettings = {
+      latitude: body.latitude,
+      longitude: body.longitude,
+      city: body.city || "N/A",
+      timezone: body.timezone,
+      mode: 'strict',
+      mealMode: 'maintenance',
+      lastNotifiedActivity: '',
+      downtime: {
+        lastNotifiedActivity: '',
+        currentActivity: '',
+        activityStartTime: null,
+        lastGripTime: null,
+        gripStrengthEnabled: true,
+        quranTurn: true,
+      },
+    };
+    
+    // Validate the newly created object
+    if (!isUserSettings(initialSettings)) {
+      return NextResponse.json({ error: "Invalid or incomplete user settings provided." }, { status: 400 });
     }
 
-    const userKey = "user_settings";
+    await kv.set("user_settings", initialSettings);
 
-    // CHANGE 2: Save the timezone to Vercel KV
-    await kv.set(userKey, {
-      latitude,
-      longitude,
-      city,
-      timezone, // Now it's saved!
-      lastNotifiedActivity: "",
-    });
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
+    return NextResponse.json({ success: true, settings: initialSettings });
+  } catch (error: unknown) {
     console.error("Error in setup-location:", error);
-    return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 },
-    );
+    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
+    return NextResponse.json({ error: "Internal Server Error", details: errorMessage }, { status: 500 });
   }
 }

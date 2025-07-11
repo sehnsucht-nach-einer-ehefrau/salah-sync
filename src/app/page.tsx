@@ -1,15 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { MapPin, Clock, Check, Hand, Utensils, Weight, ChevronsDown } from "lucide-react";
-import { calculateSchedule, ScheduleItem, PrayerTimes, MealMode, addMinutes, UserSettings } from "@/lib/schedule-logic";
-
-interface Location { latitude: number; longitude: number; city: string; timezone?: string; }
-interface DowntimeActivity { name: string; description: string; duration: number; type: "grip" | "quran" | "leetcode"; }
+import { calculateSchedule, ScheduleItem, PrayerTimes, MealMode, addMinutes, UserSettings, AppMode } from "@/lib/schedule-logic";
+import { LocationPrompt } from "@/components/LocationPrompt";
+import { LoadingState } from "@/components/LoadingState";
+import { ScheduleView } from "@/components/ScheduleView";
+import { Location, DowntimeActivity } from "@/lib/types";
 
 export default function SalahSync() {
   const [location, setLocation] = useState<Location | null>(null);
@@ -21,7 +17,7 @@ export default function SalahSync() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
 
-  const [downtimeMode, setDowntimeMode] = useState(false);
+  const [appMode, setAppMode] = useState<AppMode>("strict");
   const [gripStrengthEnabled, setGripStrengthEnabled] = useState(true);
   const [currentDowntimeActivity, setCurrentDowntimeActivity] = useState<DowntimeActivity | null>(null);
   const [downtimeStartTime, setDowntimeStartTime] = useState<Date | null>(null);
@@ -43,100 +39,114 @@ export default function SalahSync() {
     }
   }, []);
 
-  const syncWithServer = useCallback(async () => {
+  const processServerSettings = useCallback(async (settings: UserSettings) => {
+    if (settings.latitude && settings.longitude && settings.timezone) {
+      const loc = { latitude: settings.latitude, longitude: settings.longitude, city: settings.city || 'N/A', timezone: settings.timezone };
+      if (!location) setLocation(loc);
+      if (!prayerTimes) {
+        await fetchPrayerTimes(loc.latitude, loc.longitude);
+      }
+    }
+    
+    setAppMode(settings.mode);
+    setMealMode(settings.mealMode || 'maintenance');
+
+    if (settings.downtime) {
+      setGripStrengthEnabled(settings.downtime.gripStrengthEnabled);
+      setQuranTurn(settings.downtime.quranTurn);
+      if (settings.downtime.activityStartTime) setDowntimeStartTime(new Date(settings.downtime.activityStartTime));
+      
+      if (settings.mode === 'downtime') {
+        if (settings.downtime.currentActivity === "Grip Strength Training") {
+          setCurrentDowntimeActivity({ name: "Grip Strength Training", description: "Time for your grip strength set!", duration: 5, type: "grip" });
+        } else if (settings.downtime.currentActivity === "Quran Reading") {
+          setCurrentDowntimeActivity({ name: "Quran Reading", description: "Read and reflect on the Quran (30 min)", duration: 30, type: "quran" });
+        } else if (settings.downtime.currentActivity === "LeetCode Session") {
+          setCurrentDowntimeActivity({ name: "LeetCode Session", description: "Practice coding problems (30 min)", duration: 30, type: "leetcode" });
+        } else {
+          setCurrentDowntimeActivity(null);
+        }
+      }
+    } else {
+      setCurrentDowntimeActivity(null);
+    }
+  }, [location, prayerTimes, fetchPrayerTimes]);
+
+  const syncWithServer = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
     try {
       const response = await fetch('/api/get-settings');
       if (!response.ok) {
         if (response.status === 404) {
           const savedLocationJSON = localStorage.getItem("salah-sync-location");
           if (savedLocationJSON) setLocation(JSON.parse(savedLocationJSON));
-          setLoading(false);
           return;
         }
         throw new Error(`Failed to get settings: ${response.statusText}`);
       }
       
       const settings: UserSettings = await response.json();
-      
-      if (settings.latitude && settings.longitude && settings.timezone) {
-        const loc = { latitude: settings.latitude, longitude: settings.longitude, city: settings.city || 'N/A', timezone: settings.timezone };
-        if(!location) setLocation(loc);
-        if (!prayerTimes) await fetchPrayerTimes(loc.latitude, loc.longitude);
-      }
-      
-      setDowntimeMode(settings.mode === 'downtime');
-      setMealMode(settings.mealMode || 'maintenance');
+      await processServerSettings(settings);
 
-      if (settings.downtime) {
-        setGripStrengthEnabled(settings.downtime.gripStrengthEnabled);
-        setQuranTurn(settings.downtime.quranTurn);
-        if (settings.downtime.activityStartTime) setDowntimeStartTime(new Date(settings.downtime.activityStartTime));
-        
-        if (settings.mode === 'downtime') {
-            if (settings.downtime.currentActivity === "Grip Strength Training") {
-                 setCurrentDowntimeActivity({ name: "Grip Strength Training", description: "Time for your grip strength set!", duration: 5, type: "grip" });
-            } else if (settings.downtime.currentActivity === "Quran Reading") {
-                setCurrentDowntimeActivity({ name: "Quran Reading", description: "Read and reflect on the Quran (30 min)", duration: 30, type: "quran" });
-            } else if (settings.downtime.currentActivity === "LeetCode Session") {
-                setCurrentDowntimeActivity({ name: "LeetCode Session", description: "Practice coding problems (30 min)", duration: 30, type: "leetcode" });
-            } else {
-                setCurrentDowntimeActivity(null);
-            }
-        }
-      } else {
-        setCurrentDowntimeActivity(null);
-      }
     } catch (e) {
       console.error("Failed to sync with server:", e);
       setError(e instanceof Error ? e.message : "Syncing error.");
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
-  }, [prayerTimes, fetchPrayerTimes, location]);
+  }, [processServerSettings]);
 
   useEffect(() => {
-    setLoading(true);
-    syncWithServer();
+    syncWithServer(true);
     audioRef.current = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT");
     
-    const syncInterval = setInterval(syncWithServer, 20 * 1000);
+    const syncInterval = setInterval(() => syncWithServer(false), 20 * 1000);
     return () => clearInterval(syncInterval);
   }, [syncWithServer]);
   
   useEffect(() => { const timer = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(timer); }, []);
 
-  // --- THIS IS THE FIX ---
-  // A simple, fast "fire-and-forget" function. It tells the server to change something
-  // but doesn't wait for a response. The periodic sync will show the result.
   const updateServerPreference = async (payload: object) => {
     try {
-      await fetch("/api/update-state", {
+      const response = await fetch("/api/update-state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      if (!response.ok) {
+        throw new Error(`Server update failed: ${response.statusText}`);
+      }
+      const data: { success: boolean; settings?: UserSettings } = await response.json();
+      if (data.success && data.settings) {
+        await processServerSettings(data.settings);
+      } else {
+        await syncWithServer(false);
+      }
     } catch (e) {
       console.error("Failed to update server preference:", e);
       setError(e instanceof Error ? e.message : "Update failed.");
+      await syncWithServer(true);
     }
   };
 
   const toggleDowntimeMode = async () => {
-    // Show a brief loading state for better UX, then send the request.
+    setShowDowntimeDialog(false);
     setLoading(true);
     await updateServerPreference({ action: "toggle_mode" });
-    setShowDowntimeDialog(false);
-    // The setInterval will pick up the change shortly and turn off the loading spinner.
+    // The loading state will be turned off by the syncWithServer call
+    // inside updateServerPreference, which now gets fresh data faster.
   };
   
   const handleSetMealMode = (mode: MealMode) => {
+    const previousMealMode = mealMode;
     setMealMode(mode);
-    updateServerPreference({ action: 'set_meal_mode', mode });
+    updateServerPreference({ action: 'set_meal_mode', mode }).catch(() => setMealMode(previousMealMode));
   };
   
   const handleSetGripEnabled = (isEnabled: boolean) => {
+    const previousGripState = gripStrengthEnabled;
     setGripStrengthEnabled(isEnabled);
-    updateServerPreference({ action: 'toggle_grip_enabled', isEnabled });
+    updateServerPreference({ action: 'toggle_grip_enabled', isEnabled }).catch(() => setGripStrengthEnabled(previousGripState));
   };
   
   const completeGripSet = async () => {
@@ -145,22 +155,29 @@ export default function SalahSync() {
   };
   
   const formatTimeUntil = (targetTime: Date): string => {
-    const now = new Date(); let diff = targetTime.getTime() - now.getTime();
-    if (diff < 0) diff += 24 * 60 * 60 * 1000; if (diff <= 0) return "";
-    const hours = Math.floor(diff / 3600000); const minutes = Math.floor((diff % 3600000) / 60000);
+    const now = new Date();
+    let diff = targetTime.getTime() - now.getTime();
+    if (diff < 0) diff += 24 * 60 * 60 * 1000;
+    if (diff <= 0) return "";
+    const hours = Math.floor(diff / 3600000);
+    const minutes = Math.floor((diff % 3600000) / 60000);
     return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
   };
 
   const formatDowntimeTimeUntil = useCallback((startTime: Date, duration: number): string => {
-      const now = new Date(); const endTime = addMinutes(startTime, duration); const diff = endTime.getTime() - now.getTime();
-      if (diff <= 0) return ""; const minutes = Math.floor(diff / 60000); const seconds = Math.floor((diff % 60000) / 1000);
+      const now = new Date();
+      const endTime = addMinutes(startTime, duration);
+      const diff = endTime.getTime() - now.getTime();
+      if (diff <= 0) return "";
+      const minutes = Math.floor(diff / 60000);
+      const seconds = Math.floor((diff % 60000) / 1000);
       return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
     }, []);
 
   useEffect(() => {
     if (loading) return;
 
-    if (downtimeMode) {
+    if (appMode === 'downtime') {
         if (currentDowntimeActivity && downtimeStartTime) {
             setCurrentActivity({ 
                 name: currentDowntimeActivity.name, 
@@ -188,7 +205,7 @@ export default function SalahSync() {
         setNextActivity(next.name);
         setTimeUntilNext(formatTimeUntil(next.startTime));
     }
-  }, [currentTime, downtimeMode, currentDowntimeActivity, downtimeStartTime, prayerTimes, location, mealMode, loading, quranTurn, formatDowntimeTimeUntil]);
+  }, [currentTime, appMode, currentDowntimeActivity, downtimeStartTime, prayerTimes, location, mealMode, loading, quranTurn, formatDowntimeTimeUntil]);
 
   const requestLocation = async () => {
     setLoading(true); setError("");
@@ -205,74 +222,39 @@ export default function SalahSync() {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const initialSettings = { latitude, longitude, city, timezone, mode: 'strict', mealMode: 'maintenance', lastNotifiedActivity: '', downtime: { lastNotifiedActivity: '', currentActivity: '', activityStartTime: null, lastGripTime: null, gripStrengthEnabled: true, quranTurn: true } };
       await fetch('/api/setup-location', { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(initialSettings) });
-      await syncWithServer();
+      await syncWithServer(true);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : "Unable to get your location.";
-      setError(errorMessage); setLoading(false);
+      setError(errorMessage);
+    } finally {
+      setLoading(false);
     }
   };
 
   const resetLocation = () => { localStorage.clear(); setLocation(null); setPrayerTimes(null); setError(""); setLoading(true); window.location.reload(); };
   
-  if (loading) { return ( <div className="min-h-screen bg-white flex items-center justify-center"><Card className="p-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black"></div></Card></div> ); }
-  if (!location) { return ( <div className="min-h-screen bg-white flex items-center justify-center p-4"><Card className="p-8 bg-white border border-gray-200 text-center max-w-md shadow-lg"><MapPin className="h-12 w-12 text-black mx-auto mb-4" /><h2 className="text-2xl font-bold text-black mb-4">Performance Islam</h2><p className="text-gray-600 mb-6">To build your dynamic schedule, we need your location for accurate prayer times.</p>{error && <p className="text-red-500 mb-4 text-sm">{error}</p>}<Button onClick={requestLocation} className="w-full bg-black hover:bg-gray-800 text-white"><MapPin className="h-4 w-4 mr-2" /> Get My Location</Button></Card></div> ); }
-  if (!currentActivity) { return ( <div className="min-h-screen bg-white flex items-center justify-center p-4"><Card className="p-8 bg-white border border-gray-200 text-center shadow-lg"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black mx-auto mb-4"></div><h2 className="text-xl font-semibold text-black mb-2">Calculating Schedule</h2><p className="text-gray-600">Building your optimized daily routine...</p></Card></div> ); }
+  if (loading) return <LoadingState />;
+  if (!location) return <LocationPrompt requestLocation={requestLocation} error={error} />;
+  if (!currentActivity) return <LoadingState message="Calculating Schedule" description="Building your optimized daily routine..." />;
 
   return (
-    <div className={`min-h-screen flex items-center justify-center p-4 transition-all duration-700 ease-in-out ${downtimeMode ? "bg-black" : "bg-white"}`}>
-      <div className="text-center max-w-2xl w-full">
-        <Card className={`relative p-8 sm:p-12 border mb-4 shadow-lg transition-all duration-700 ease-in-out ${downtimeMode ? "bg-black border-gray-800 text-white" : "bg-white border-gray-200 text-black"}`}>
-          {downtimeMode && (
-            <TooltipProvider delayDuration={0}>
-              <Tooltip>
-                <TooltipTrigger asChild><Button onClick={() => handleSetGripEnabled(!gripStrengthEnabled)} variant="ghost" size="icon" className="absolute top-3 right-3 h-8 w-8 rounded-full hover:bg-white/10"><Hand className={`h-5 w-5 transition-colors ${gripStrengthEnabled ? "text-white" : "text-gray-600"}`} /></Button></TooltipTrigger>
-                <TooltipContent className="bg-black text-white border-gray-700"><p>Grip Training: {gripStrengthEnabled ? "ON" : "OFF"}</p></TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-
-          <h1 className="text-4xl md:text-6xl font-bold mb-2">{currentActivity.name}</h1>
-          <p className={`text-xl md:text-2xl mb-4 ${downtimeMode ? "text-gray-300" : "text-gray-600"}`}>{currentActivity.description}</p>
-          
-          {downtimeMode && currentDowntimeActivity?.type === "grip" && (
-            <div className="mt-6"><Button onClick={completeGripSet} className="bg-white hover:bg-gray-200 text-black" size="lg"><Check className="h-5 w-5 mr-2" /> Completed Set</Button></div>
-          )}
-
-          {nextActivity && timeUntilNext && (
-            <div className={`flex items-center justify-center text-lg mt-4 ${downtimeMode ? "text-gray-400" : "text-gray-500"}`}>
-              <Clock className="h-5 w-5 mr-2 mb-1" />
-              <span>Next: {nextActivity} {timeUntilNext}</span>
-            </div>
-          )}
-        </Card>
-
-        {!downtimeMode && (
-          <div className="mb-4 flex justify-center gap-2">
-            <Button variant={mealMode === 'cutting' ? 'default' : 'outline'} onClick={() => handleSetMealMode('cutting')} className="gap-2"><ChevronsDown size={16}/>Cutting</Button>
-            <Button variant={mealMode === 'maintenance' ? 'default' : 'outline'} onClick={() => handleSetMealMode('maintenance')} className="gap-2"><Weight size={16}/>Maintenance</Button>
-            <Button variant={mealMode === 'bulking' ? 'default' : 'outline'} onClick={() => handleSetMealMode('bulking')} className="gap-2"><Utensils size={16}/>Bulking</Button>
-          </div>
-        )}
-        
-        <div className={`flex items-center justify-center text-md gap-4 transition-all duration-700 ${downtimeMode ? "text-gray-400" : "text-gray-500"}`}>
-          <button onClick={resetLocation} className="flex items-center hover:opacity-70 transition-opacity"><MapPin className="h-4 w-4 mr-1 flex-shrink-0" /><span className="truncate">{location.city}</span></button>
-          <span>•</span>
-          <TooltipProvider delayDuration={0}>
-            <Tooltip>
-              <TooltipTrigger asChild><span className="font-mono min-w-[70px] text-center">{currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span></TooltipTrigger>
-              <TooltipContent className="bg-black text-white border-gray-700"><p>{currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true })}</p></TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          <span>•</span>
-          <AlertDialog open={showDowntimeDialog} onOpenChange={setShowDowntimeDialog}>
-            <AlertDialogTrigger asChild><button className="hover:opacity-70 transition-opacity">{downtimeMode ? "Exit" : "Downtime"}</button></AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader><AlertDialogTitle className="text-2xl">{downtimeMode ? "Exit Downtime Mode?" : "Enter Downtime Mode?"}</AlertDialogTitle><AlertDialogDescription className="text-base">{downtimeMode ? "This will return to your strict, testosterone-optimized schedule." : "This will switch to server-managed Quran/LeetCode sessions with grip training notifications."}</AlertDialogDescription></AlertDialogHeader>
-              <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={toggleDowntimeMode} className="bg-black hover:bg-gray-800 text-white">{downtimeMode ? "Exit Downtime" : "Enter Downtime"}</AlertDialogAction></AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
-      </div>
-    </div>
+    <ScheduleView
+      downtimeMode={appMode === 'downtime'}
+      gripStrengthEnabled={gripStrengthEnabled}
+      handleSetGripEnabled={handleSetGripEnabled}
+      currentActivity={currentActivity}
+      currentDowntimeActivity={currentDowntimeActivity}
+      completeGripSet={completeGripSet}
+      nextActivity={nextActivity}
+      timeUntilNext={timeUntilNext}
+      mealMode={mealMode}
+      handleSetMealMode={handleSetMealMode}
+      resetLocation={resetLocation}
+      location={location}
+      currentTime={currentTime}
+      showDowntimeDialog={showDowntimeDialog}
+      setShowDowntimeDialog={setShowDowntimeDialog}
+      toggleDowntimeMode={toggleDowntimeMode}
+    />
   );
 }

@@ -21,23 +21,26 @@ export interface ScheduleItem {
   endTime: Date;
 }
 export type MealMode = "bulking" | "maintenance" | "cutting";
+export type AppMode = "strict" | "downtime";
+
+export interface DowntimeState {
+  lastNotifiedActivity: string;
+  currentActivity: string;
+  activityStartTime: string | null;
+  lastGripTime: string | null;
+  gripStrengthEnabled: boolean;
+  quranTurn: boolean;
+}
 
 export interface UserSettings {
   latitude: number;
   longitude: number;
   timezone: string;
   city?: string; // <<< FIX: Added city property to match saved data
-  mode: "strict" | "downtime";
+  mode: AppMode;
   mealMode: MealMode;
-  lastNotifiedActivity: string;
-  downtime: {
-    lastNotifiedActivity: string;
-    currentActivity: string;
-    activityStartTime: string | null;
-    lastGripTime: string | null;
-    gripStrengthEnabled: boolean;
-    quranTurn: boolean;
-  };
+  lastNotifiedActivity: string; // For strict mode
+  downtime: DowntimeState;
 }
 
 // =================================================================
