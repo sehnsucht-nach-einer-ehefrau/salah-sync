@@ -4,7 +4,7 @@ import { kv } from "@vercel/kv";
 import { type NextRequest, NextResponse } from "next/server";
 import { UserSettings, MealMode } from "@/lib/schedule-logic";
 
-type Action = "toggle_mode" | "set_meal_mode" | "toggle_grip_enabled" | "complete_grip";
+type Action = "toggle_mode" | "set_meal_mode" | "toggle_grip_enabled";
 
 interface RequestBody {
   action: Action;
@@ -40,39 +40,6 @@ const actionHandlers: Record<Action, (settings: UserSettings, body: RequestBody)
     return {
       ...settings,
       downtime: { ...settings.downtime, gripStrengthEnabled: body.isEnabled },
-    };
-  },
-  complete_grip: (settings) => {
-    const now = new Date();
-    const { downtime } = settings;
-
-    let activityToResume: string;
-    let newActivityStartTime = now.toISOString();
-
-    // Case 1: An activity was paused. Resume it.
-    if (downtime.activityBeforePause && downtime.timeRemainingOnPause) {
-      activityToResume = downtime.activityBeforePause;
-      const thirtyMinutes = 30 * 60 * 1000;
-      const timeAlreadyPassed = thirtyMinutes - downtime.timeRemainingOnPause;
-      newActivityStartTime = new Date(now.getTime() - timeAlreadyPassed).toISOString();
-    }
-    // Case 2: Nothing was paused. Start the next scheduled activity.
-    else {
-      // Don't flip the turn; just start the activity that should be running.
-      activityToResume = downtime.quranTurn ? "Quran Reading" : "LeetCode Session";
-    }
-
-    return {
-      ...settings,
-      downtime: {
-        ...settings.downtime,
-        lastGripTime: now.toISOString(),
-        currentActivity: activityToResume,
-        activityStartTime: newActivityStartTime,
-        lastNotifiedActivity: "Grip Strength Training", // So we don't get a grip notification right away
-        timeRemainingOnPause: null,
-        activityBeforePause: null,
-      },
     };
   },
 };

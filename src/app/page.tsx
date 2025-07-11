@@ -58,7 +58,7 @@ export default function SalahSync() {
       
       if (settings.mode === 'downtime') {
         if (settings.downtime.currentActivity === "Grip Strength Training") {
-          setCurrentDowntimeActivity({ name: "Grip Strength Training", description: "Time for your grip strength set!", duration: 5, type: "grip" });
+          setCurrentDowntimeActivity({ name: "Grip Strength Training", description: "Time for your grip strength set!", duration: 1, type: "grip" });
         } else if (settings.downtime.currentActivity === "Quran Reading") {
           setCurrentDowntimeActivity({ name: "Quran Reading", description: "Read and reflect on the Quran (30 min)", duration: 30, type: "quran" });
         } else if (settings.downtime.currentActivity === "LeetCode Session") {
@@ -153,11 +153,6 @@ export default function SalahSync() {
     updateServerPreference({ action: 'toggle_grip_enabled', isEnabled }).catch(() => setGripStrengthEnabled(previousGripState));
   };
   
-  const completeGripSet = async () => {
-    setLoading(true);
-    await updateServerPreference({ action: 'complete_grip' });
-  };
-  
   const formatTimeUntil = (targetTime: Date): string => {
     const now = new Date();
     let diff = targetTime.getTime() - now.getTime();
@@ -248,7 +243,6 @@ export default function SalahSync() {
       handleSetGripEnabled={handleSetGripEnabled}
       currentActivity={currentActivity}
       currentDowntimeActivity={currentDowntimeActivity}
-      completeGripSet={completeGripSet}
       nextActivity={nextActivity}
       timeUntilNext={timeUntilNext}
       mealMode={mealMode}

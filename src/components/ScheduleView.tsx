@@ -12,7 +12,6 @@ interface ScheduleViewProps {
     handleSetGripEnabled: (isEnabled: boolean) => void;
     currentActivity: ScheduleItem;
     currentDowntimeActivity: DowntimeActivity | null;
-    completeGripSet: () => void;
     nextActivity: string;
     timeUntilNext: string;
     mealMode: MealMode;
@@ -31,7 +30,6 @@ export function ScheduleView({
     handleSetGripEnabled,
     currentActivity,
     currentDowntimeActivity,
-    completeGripSet,
     nextActivity,
     timeUntilNext,
     mealMode,
@@ -60,10 +58,13 @@ export function ScheduleView({
                     <p className={`text-xl md:text-2xl mb-4 ${downtimeMode ? "text-gray-300" : "text-gray-600"}`}>{currentActivity.description}</p>
                     
                     {downtimeMode && currentDowntimeActivity?.type === "grip" && (
-                        <div className="mt-6"><Button onClick={completeGripSet} className="bg-white hover:bg-gray-200 text-black" size="lg"><Check className="h-5 w-5 mr-2" /> Completed Set</Button></div>
+                        <div className={`flex items-center justify-center text-lg mt-4 ${downtimeMode ? "text-gray-400" : "text-gray-500"}`}>
+                            <Clock className="h-5 w-5 mr-2 mb-1" />
+                            <span>Time Remaining: {timeUntilNext}</span>
+                        </div>
                     )}
 
-                    {nextActivity && timeUntilNext && (
+                    {nextActivity && timeUntilNext && currentDowntimeActivity?.type !== 'grip' && (
                         <div className={`flex items-center justify-center text-lg mt-4 ${downtimeMode ? "text-gray-400" : "text-gray-500"}`}>
                             <Clock className="h-5 w-5 mr-2 mb-1" />
                             <span>Next: {nextActivity} {timeUntilNext}</span>
