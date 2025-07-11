@@ -5,6 +5,47 @@ export interface Location {
   timezone?: string;
 }
 
+export interface PrayerTimes {
+  Fajr: string;
+  Dhuhr: string;
+  Asr: string;
+  Maghrib: string;
+  Isha: string;
+  Sunrise: string;
+}
+
+export interface ScheduleItem {
+  name: string;
+  description: string;
+  startTime: Date;
+  endTime: Date;
+}
+
+export type MealMode = "bulking" | "maintenance" | "cutting";
+export type AppMode = "strict" | "downtime";
+
+export interface DowntimeState {
+  lastNotifiedActivity: string;
+  currentActivity: string;
+  activityStartTime: string | null;
+  lastGripTime: string | null;
+  gripStrengthEnabled: boolean;
+  quranTurn: boolean;
+  timeRemainingOnPause: number | null; 
+  activityBeforePause: string | null;
+}
+
+export interface UserSettings {
+  latitude: number;
+  longitude: number;
+  timezone: string;
+  city?: string;
+  mode: AppMode;
+  mealMode: MealMode;
+  lastNotifiedActivity: string;
+  downtime: Partial<DowntimeState>;
+}
+
 export interface DowntimeActivity {
   name: string;
   description: string;

@@ -1,258 +1,224 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import { calculateSchedule, ScheduleItem, PrayerTimes, MealMode, addMinutes, UserSettings, AppMode } from "@/lib/schedule-logic";
+import { useState, useEffect, useCallback } from "react";
+import { ScheduleItem, MealMode, AppMode, UserSettings } from "@/lib/types";
 import { LocationPrompt } from "@/components/LocationPrompt";
 import { LoadingState } from "@/components/LoadingState";
 import { ScheduleView } from "@/components/ScheduleView";
-import { Location, DowntimeActivity } from "@/lib/types";
+import { calculateSchedule } from "@/lib/schedule-logic";
+
+interface ViewState {
+  settings: UserSettings | null;
+  schedule: ScheduleItem[] | null;
+  currentActivity: ScheduleItem | null;
+  nextActivity: ScheduleItem | null;
+  timeUntilNext: string;
+  loading: boolean;
+  error: string | null;
+}
 
 export default function SalahSync() {
-  const [location, setLocation] = useState<Location | null>(null);
-  const [prayerTimes, setPrayerTimes] = useState<PrayerTimes | null>(null);
-  const [currentActivity, setCurrentActivity] = useState<ScheduleItem | null>(null);
-  const [currentTime, setCurrentTime] = useState(new Date());
-  const [nextActivity, setNextActivity] = useState<string>("");
-  const [timeUntilNext, setTimeUntilNext] = useState<string>("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string>("");
+  const [viewState, setViewState] = useState<ViewState>({
+    settings: null,
+    schedule: null,
+    currentActivity: null,
+    nextActivity: null,
+    timeUntilNext: "",
+    loading: true,
+    error: null,
+  });
 
-  const [appMode, setAppMode] = useState<AppMode>("strict");
-  const [gripStrengthEnabled, setGripStrengthEnabled] = useState(true);
-  const [currentDowntimeActivity, setCurrentDowntimeActivity] = useState<DowntimeActivity | null>(null);
-  const [downtimeStartTime, setDowntimeStartTime] = useState<Date | null>(null);
-  const [quranTurn, setQuranTurn] = useState(true);
-  const [showDowntimeDialog, setShowDowntimeDialog] = useState(false);
-  const [mealMode, setMealMode] = useState<MealMode>("maintenance");
+  const handleError = (message: string, error?: any) => {
+    console.error(message, error);
+    setViewState(prev => ({ ...prev, loading: false, error: message }));
+  };
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  
-  const fetchPrayerTimes = useCallback(async (lat: number, lon: number) => {
+  const fetchFullSchedule = useCallback(async (settings: UserSettings) => {
+    if (!settings.latitude || !settings.longitude || !settings.timezone) return null;
     try {
-      const today = new Date(); const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}?latitude=${lat}&longitude=${lon}&method=2`;
-      const res = await fetch(url); if (!res.ok) throw new Error(`Failed to fetch prayer times: ${res.status}`);
-      const data = await res.json(); if (data.data && data.data.timings) { setPrayerTimes(data.data.timings); } 
-      else { throw new Error("Invalid prayer times data received"); }
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to fetch prayer times.";
-      setError(errorMessage);
+      // This is a bit of a hack. The cron job is the source of truth, but we need the prayer times to show the full schedule.
+      // In a future version, the full schedule could be stored in KV by the cron job.
+      const today = new Date();
+      const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}?latitude=${settings.latitude}&longitude=${settings.longitude}&method=2`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Failed to fetch prayer times for schedule view");
+      const data = await res.json();
+      if (!data.data || !data.data.timings) throw new Error("Invalid prayer times data");
+      
+      const { schedule, current, next } = calculateSchedule(data.data.timings, settings.timezone, settings.mealMode);
+      
+      return { schedule, current, next };
+    } catch (err) {
+      handleError("Could not calculate the full schedule.", err);
+      return null;
     }
   }, []);
-
-  const processServerSettings = useCallback(async (settings: UserSettings) => {
-    if (settings.latitude && settings.longitude && settings.timezone) {
-      const loc = { latitude: settings.latitude, longitude: settings.longitude, city: settings.city || 'N/A', timezone: settings.timezone };
-      if (!location) setLocation(loc);
-      if (!prayerTimes) {
-        await fetchPrayerTimes(loc.latitude, loc.longitude);
-      }
+  
+  const syncWithServer = useCallback(async (showLoading = true) => {
+    if (showLoading) {
+      setViewState(prev => ({ ...prev, loading: true, error: null }));
     }
-    
-    setAppMode(settings.mode);
-    setMealMode(settings.mealMode || 'maintenance');
-
-    if (settings.downtime) {
-      setGripStrengthEnabled(settings.downtime.gripStrengthEnabled);
-      setQuranTurn(settings.downtime.quranTurn);
-      if (settings.downtime.activityStartTime) setDowntimeStartTime(new Date(settings.downtime.activityStartTime));
-      
-      if (settings.mode === 'downtime') {
-        if (settings.downtime.currentActivity === "Grip Strength Training") {
-          setCurrentDowntimeActivity({ name: "Grip Strength Training", description: "Time for your grip strength set!", duration: 1, type: "grip" });
-        } else if (settings.downtime.currentActivity === "Quran Reading") {
-          setCurrentDowntimeActivity({ name: "Quran Reading", description: "Read and reflect on the Quran (30 min)", duration: 30, type: "quran" });
-        } else if (settings.downtime.currentActivity === "LeetCode Session") {
-          setCurrentDowntimeActivity({ name: "LeetCode Session", description: "Practice coding problems (30 min)", duration: 30, type: "leetcode" });
-        } else {
-          setCurrentDowntimeActivity(null);
-        }
-      }
-    } else {
-      setCurrentDowntimeActivity(null);
-    }
-  }, [location, prayerTimes, fetchPrayerTimes]);
-
-  const syncWithServer = useCallback(async (showLoading = false) => {
-    if (showLoading) setLoading(true);
+  
     try {
-      const response = await fetch('/api/get-settings');
+      const response = await fetch('/api/settings');
       if (!response.ok) {
         if (response.status === 404) {
-          const savedLocationJSON = localStorage.getItem("salah-sync-location");
-          if (savedLocationJSON) setLocation(JSON.parse(savedLocationJSON));
-          return;
+          // No settings yet, prompt for location.
+          setViewState(prev => ({ ...prev, loading: false, settings: null })); 
+        } else {
+          throw new Error(`Server error: ${response.statusText}`);
         }
-        throw new Error(`Failed to get settings: ${response.statusText}`);
+        return;
+      }
+  
+      const settings: UserSettings = await response.json();
+      const scheduleData = await fetchFullSchedule(settings);
+
+      if (!scheduleData) {
+        // If schedule calculation fails, we can still show basic info
+        setViewState(prev => ({ ...prev, settings, loading: false }));
+        return;
+      }
+
+      // Determine current activity based on mode
+      let currentActivity = scheduleData.current;
+      if (settings.mode === 'downtime' && settings.downtime) {
+        const { currentActivity: downtimeActivityName, activityStartTime } = settings.downtime;
+        
+        if (downtimeActivityName && activityStartTime) {
+          const duration = downtimeActivityName === "Grip Strength Training" ? 1 : 30;
+          const endTime = new Date(activityStartTime);
+          endTime.setMinutes(endTime.getMinutes() + duration);
+
+          currentActivity = {
+            name: downtimeActivityName,
+            description: settings.downtime.lastNotifiedActivity || "Downtime activity in progress.",
+            startTime: new Date(activityStartTime),
+            endTime: endTime,
+          };
+        }
       }
       
-      const settings: UserSettings = await response.json();
-      await processServerSettings(settings);
-
-    } catch (e) {
-      console.error("Failed to sync with server:", e);
-      setError(e instanceof Error ? e.message : "Syncing error.");
-    } finally {
-      if (showLoading) setLoading(false);
-    }
-  }, [processServerSettings]);
-
-  useEffect(() => {
-    syncWithServer(true);
-    audioRef.current = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT");
-    
-    // Sync with the server every 5 seconds to keep the UI fresh.
-    const syncInterval = setInterval(() => syncWithServer(false), 5 * 1000);
-    return () => clearInterval(syncInterval);
-  }, [syncWithServer]);
+      setViewState({
+        settings,
+        schedule: scheduleData.schedule,
+        currentActivity,
+        nextActivity: scheduleData.next,
+        timeUntilNext: formatTimeUntil(scheduleData.next.startTime),
+        loading: false,
+        error: null,
+      });
   
-  useEffect(() => { const timer = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(timer); }, []);
+    } catch (e) {
+      handleError("Failed to sync with the server.", e);
+    }
+  }, [fetchFullSchedule]);
+  
+  useEffect(() => {
+    syncWithServer(); // Initial sync
+  
+    // Logic to sync with the cron job's 1-minute interval
+    const interval = setInterval(() => {
+      const seconds = new Date().getSeconds();
+      if (seconds === 1) { // Sync 1 second after the minute starts
+        syncWithServer(false);
+      }
+    }, 1000); // Check every second
+  
+    return () => clearInterval(interval);
+  }, [syncWithServer]);
 
-  const updateServerPreference = async (payload: object) => {
+  // Update countdown timer every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setViewState(prev => {
+        if (!prev.nextActivity?.startTime) return prev;
+        return { ...prev, timeUntilNext: formatTimeUntil(prev.nextActivity.startTime) };
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const updateServer = async (payload: object) => {
+    setViewState(prev => ({ ...prev, loading: true }));
     try {
-      const response = await fetch("/api/update-state", {
+      const response = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!response.ok) {
-        throw new Error(`Server update failed: ${response.statusText}`);
-      }
-      const data: { success: boolean; settings?: UserSettings } = await response.json();
-      if (data.success && data.settings) {
-        await processServerSettings(data.settings);
-      } else {
-        await syncWithServer(false);
-      }
+      if (!response.ok) throw new Error(`Server update failed: ${response.statusText}`);
+      
+      // Re-sync to get the canonical state from the server
+      await syncWithServer(false);
+
     } catch (e) {
-      console.error("Failed to update server preference:", e);
-      setError(e instanceof Error ? e.message : "Update failed.");
-      await syncWithServer(true);
-    } finally {
-      // This ensures the loading spinner is always turned off after the operation.
-      setLoading(false);
+      handleError("Failed to update preferences.", e);
+      await syncWithServer(true); // Attempt to recover state
     }
   };
 
-  const toggleDowntimeMode = async () => {
-    setShowDowntimeDialog(false);
-    setLoading(true);
-    await updateServerPreference({ action: "toggle_mode" });
-    // The loading state will be turned off by the syncWithServer call
-    // inside updateServerPreference, which now gets fresh data faster.
-  };
-  
-  const handleSetMealMode = (mode: MealMode) => {
-    const previousMealMode = mealMode;
-    setMealMode(mode);
-    updateServerPreference({ action: 'set_meal_mode', mode }).catch(() => setMealMode(previousMealMode));
-  };
-  
-  const handleSetGripEnabled = (isEnabled: boolean) => {
-    const previousGripState = gripStrengthEnabled;
-    setGripStrengthEnabled(isEnabled);
-    updateServerPreference({ action: 'toggle_grip_enabled', isEnabled }).catch(() => setGripStrengthEnabled(previousGripState));
-  };
-  
-  const formatTimeUntil = (targetTime: Date): string => {
-    const now = new Date();
-    let diff = targetTime.getTime() - now.getTime();
-    if (diff < 0) diff += 24 * 60 * 60 * 1000;
-    if (diff <= 0) return "";
-    const hours = Math.floor(diff / 3600000);
-    const minutes = Math.floor((diff % 3600000) / 60000);
-    return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-  };
-
-  const formatDowntimeTimeUntil = useCallback((startTime: Date, duration: number): string => {
-      const now = new Date();
-      const endTime = addMinutes(startTime, duration);
-      const diff = endTime.getTime() - now.getTime();
-      if (diff <= 0) return "";
-      const minutes = Math.floor(diff / 60000);
-      const seconds = Math.floor((diff % 60000) / 1000);
-      return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-    }, []);
-
-  useEffect(() => {
-    if (loading) return;
-
-    if (appMode === 'downtime') {
-        if (currentDowntimeActivity && downtimeStartTime) {
-            setCurrentActivity({ 
-                name: currentDowntimeActivity.name, 
-                description: currentDowntimeActivity.description, 
-                startTime: downtimeStartTime, 
-                endTime: addMinutes(downtimeStartTime, currentDowntimeActivity.duration) 
-            });
-            const nextName = quranTurn ? "LeetCode Session" : "Quran Reading";
-            const remaining = formatDowntimeTimeUntil(downtimeStartTime, currentDowntimeActivity.duration);
-            if (currentDowntimeActivity.type === 'grip') {
-              setNextActivity(`Resuming: ${nextName}`);
-              setTimeUntilNext('');
-            } else {
-              setNextActivity(nextName);
-              setTimeUntilNext(`in ${remaining}`);
-            }
-        } else {
-            setCurrentActivity({ name: "Downtime", description: "Waiting for next cycle...", startTime: new Date(), endTime: new Date() });
-            setNextActivity("");
-            setTimeUntilNext("");
-        }
-    } else if (prayerTimes && location?.timezone) {
-        const { current, next } = calculateSchedule(prayerTimes, location.timezone, mealMode);
-        setCurrentActivity(current);
-        setNextActivity(next.name);
-        setTimeUntilNext(formatTimeUntil(next.startTime));
-    }
-  }, [currentTime, appMode, currentDowntimeActivity, downtimeStartTime, prayerTimes, location, mealMode, loading, quranTurn, formatDowntimeTimeUntil]);
+  const toggleDowntimeMode = () => updateServer({ action: "toggle_mode" });
+  const handleSetMealMode = (mode: MealMode) => updateServer({ action: 'set_meal_mode', mode });
+  const handleSetGripEnabled = (isEnabled: boolean) => updateServer({ action: 'toggle_grip_enabled', isEnabled });
 
   const requestLocation = async () => {
-    setLoading(true); setError("");
+    setViewState(prev => ({ ...prev, loading: true, error: null }));
     try {
-      if (!navigator.geolocation) throw new Error("Geolocation is not supported");
+      if (!navigator.geolocation) throw new Error("Geolocation is not supported by your browser.");
       const pos = await new Promise<GeolocationPosition>((res, rej) => navigator.geolocation.getCurrentPosition(res, rej));
       const { latitude, longitude } = pos.coords;
+      
       let city = "Unknown City";
       try {
         const geoRes = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`);
-        if (geoRes.ok) { const data = await geoRes.json(); city = data.city || data.locality || "Unknown City"; }
+        if (geoRes.ok) { const data = await geoRes.json(); city = data.city || data.locality || "Unknown"; }
       } catch (e) { console.warn("Could not get city name:", e); }
       
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const initialSettings = { latitude, longitude, city, timezone, mode: 'strict', mealMode: 'maintenance', lastNotifiedActivity: '', downtime: { lastNotifiedActivity: '', currentActivity: '', activityStartTime: null, lastGripTime: null, gripStrengthEnabled: true, quranTurn: true } };
-      await fetch('/api/setup-location', { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(initialSettings) });
-      await syncWithServer(true);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Unable to get your location.";
-      setError(errorMessage);
-    } finally {
-      setLoading(false);
+      const initialSettings: Partial<UserSettings> = { latitude, longitude, city, timezone, mode: 'strict', mealMode: 'maintenance', lastNotifiedActivity: '' };
+      
+      await updateServer({ action: 'setup_location', ...initialSettings }); // A new action
+      await syncWithServer();
+    } catch (err) {
+      handleError("Could not get your location.", err);
     }
   };
-
-  const resetLocation = () => { localStorage.clear(); setLocation(null); setPrayerTimes(null); setError(""); setLoading(true); window.location.reload(); };
   
-  if (loading) return <LoadingState />;
-  if (!location) return <LocationPrompt requestLocation={requestLocation} error={error} />;
-  if (!currentActivity) return <LoadingState message="Calculating Schedule" description="Building your optimized daily routine..." />;
+  const resetLocation = async () => {
+    setViewState({ loading: true, error: null, settings: null, schedule: null, currentActivity: null, nextActivity: null, timeUntilNext: '' });
+    // We can also ask the server to delete the settings
+    await fetch("/api/settings", { method: "DELETE" }); // Implement DELETE on the server
+    window.location.reload();
+  };
+
+  const formatTimeUntil = (targetTime: Date): string => {
+    if (!targetTime) return "";
+    let diff = targetTime.getTime() - new Date().getTime();
+    if (diff < 0) return "Now";
+    const hours = Math.floor(diff / 3600000);
+    const minutes = Math.floor((diff % 3600000) / 60000);
+    const seconds = Math.floor((diff % 60000) / 1000);
+    return hours > 0 ? `${hours}h ${minutes}m` : (minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`);
+  };
+
+  if (viewState.loading && !viewState.settings) return <LoadingState />;
+  if (!viewState.settings) return <LocationPrompt requestLocation={requestLocation} error={viewState.error || ""} />;
+  if (!viewState.currentActivity) return <LoadingState message="Calculating Schedule..." description="Building your optimized daily routine..." />;
 
   return (
     <ScheduleView
-      downtimeMode={appMode === 'downtime'}
-      gripStrengthEnabled={gripStrengthEnabled}
+      downtimeMode={viewState.settings.mode === 'downtime'}
+      gripStrengthEnabled={viewState.settings.downtime?.gripStrengthEnabled ?? true}
       handleSetGripEnabled={handleSetGripEnabled}
-      currentActivity={currentActivity}
-      currentDowntimeActivity={currentDowntimeActivity}
-      nextActivity={nextActivity}
-      timeUntilNext={timeUntilNext}
-      mealMode={mealMode}
+      currentActivity={viewState.currentActivity}
+      nextActivity={viewState.nextActivity?.name || "..."}
+      timeUntilNext={viewState.timeUntilNext}
+      mealMode={viewState.settings.mealMode}
       handleSetMealMode={handleSetMealMode}
       resetLocation={resetLocation}
-      location={location}
-      currentTime={currentTime}
-      showDowntimeDialog={showDowntimeDialog}
-      setShowDowntimeDialog={setShowDowntimeDialog}
       toggleDowntimeMode={toggleDowntimeMode}
+      schedule={viewState.schedule || []}
     />
   );
 }
