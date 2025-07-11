@@ -100,7 +100,8 @@ export default function SalahSync() {
     syncWithServer(true);
     audioRef.current = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT");
     
-    const syncInterval = setInterval(() => syncWithServer(false), 20 * 1000);
+    // Sync with the server every 5 seconds to keep the UI fresh.
+    const syncInterval = setInterval(() => syncWithServer(false), 5 * 1000);
     return () => clearInterval(syncInterval);
   }, [syncWithServer]);
   

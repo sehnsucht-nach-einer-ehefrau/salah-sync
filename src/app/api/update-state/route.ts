@@ -46,18 +46,20 @@ const actionHandlers: Record<Action, (settings: UserSettings, body: RequestBody)
     const now = new Date();
     const { downtime } = settings;
 
-    // Default to a neutral state if there was no activity before the pause.
-    let activityToResume = "Starting...";
+    let activityToResume: string;
     let newActivityStartTime = now.toISOString();
 
-    // If an activity was paused, calculate its new start time to resume it.
+    // Case 1: An activity was paused. Resume it.
     if (downtime.activityBeforePause && downtime.timeRemainingOnPause) {
       activityToResume = downtime.activityBeforePause;
       const thirtyMinutes = 30 * 60 * 1000;
-      // This is the time that had already passed for the activity before it was paused.
       const timeAlreadyPassed = thirtyMinutes - downtime.timeRemainingOnPause;
-      // Rewind the start time to account for the time that already passed.
       newActivityStartTime = new Date(now.getTime() - timeAlreadyPassed).toISOString();
+    }
+    // Case 2: Nothing was paused. Start the next scheduled activity.
+    else {
+      // Don't flip the turn; just start the activity that should be running.
+      activityToResume = downtime.quranTurn ? "Quran Reading" : "LeetCode Session";
     }
 
     return {
@@ -68,7 +70,6 @@ const actionHandlers: Record<Action, (settings: UserSettings, body: RequestBody)
         currentActivity: activityToResume,
         activityStartTime: newActivityStartTime,
         lastNotifiedActivity: "Grip Strength Training", // So we don't get a grip notification right away
-        // Clear the pause state
         timeRemainingOnPause: null,
         activityBeforePause: null,
       },
