@@ -44,8 +44,9 @@ export default function SalahSync() {
   }, []);
 
   const syncWithServer = useCallback(async () => {
+    // No loading indicator on periodic syncs for a smoother experience
+    // setLoading(true); 
     try {
-      setLoading(true);
       const response = await fetch('/api/get-settings');
       if (!response.ok) {
         if (response.status === 404) {
@@ -62,12 +63,13 @@ export default function SalahSync() {
       
       if (settings.latitude && settings.longitude && settings.timezone) {
         const loc = { latitude: settings.latitude, longitude: settings.longitude, city: settings.city || 'N/A', timezone: settings.timezone };
-        setLocation(loc);
+        if(!location) setLocation(loc); // Only set if not already set to prevent re-renders
         if (!prayerTimes) await fetchPrayerTimes(loc.latitude, loc.longitude);
       }
       
       setDowntimeMode(settings.mode === 'downtime');
       setMealMode(settings.mealMode || 'maintenance');
+
       if (settings.downtime) {
         setGripStrengthEnabled(settings.downtime.gripStrengthEnabled);
         setQuranTurn(settings.downtime.quranTurn);
@@ -81,6 +83,7 @@ export default function SalahSync() {
             } else if (settings.downtime.currentActivity === "LeetCode Session") {
                 setCurrentDowntimeActivity({ name: "LeetCode Session", description: "Practice coding problems (30 min)", duration: 30, type: "leetcode" });
             } else {
+                // This covers "Starting..." or null cases
                 setCurrentDowntimeActivity(null);
             }
         }
@@ -93,55 +96,53 @@ export default function SalahSync() {
     } finally {
       setLoading(false);
     }
-  }, [prayerTimes, fetchPrayerTimes]);
+  }, [prayerTimes, fetchPrayerTimes, location]);
 
   useEffect(() => {
     syncWithServer();
     audioRef.current = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT");
     
-    const syncInterval = setInterval(syncWithServer, 30 * 1000);
+    const syncInterval = setInterval(syncWithServer, 20 * 1000); // Check for updates every 20 seconds
     return () => clearInterval(syncInterval);
   }, [syncWithServer]);
   
   useEffect(() => { const timer = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(timer); }, []);
 
-  const updateServerState = async (payload: object) => {
+  const updateServerPreference = async (payload: object) => {
     try {
-      setLoading(true);
-      const res = await fetch("/api/update-state", {
+      await fetch("/api/update-state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error('Failed to update server state');
-      await syncWithServer();
+      // We no longer need to re-sync immediately. We just wait for the next interval.
     } catch (e) {
-      console.error("Failed to update server state:", e);
+      console.error("Failed to update server preference:", e);
       setError(e instanceof Error ? e.message : "Update failed.");
-    } finally {
-      setLoading(false);
     }
   };
 
   const toggleDowntimeMode = async () => {
-    await updateServerState({ action: "toggle_mode" });
+    // Optimistically update the UI to show we're switching
+    setLoading(true);
+    setCurrentActivity({ name: "Switching Mode...", description: "Waiting for next cycle...", startTime: new Date(), endTime: new Date() });
+    await updateServerPreference({ action: "toggle_mode" });
     setShowDowntimeDialog(false);
+    // The setInterval will handle the rest.
   };
   
   const handleSetMealMode = (mode: MealMode) => {
     setMealMode(mode);
-    updateServerState({ action: 'set_meal_mode', mode });
+    updateServerPreference({ action: 'set_meal_mode', mode });
   };
   
   const handleSetGripEnabled = (isEnabled: boolean) => {
     setGripStrengthEnabled(isEnabled);
-    updateServerState({ action: 'toggle_grip_enabled', isEnabled });
+    updateServerPreference({ action: 'toggle_grip_enabled', isEnabled });
   };
   
   const completeGripSet = async () => {
-    if (currentDowntimeActivity?.type === "grip") {
-       await updateServerState({ action: 'complete_grip' });
-    }
+    await updateServerPreference({ action: 'complete_grip' });
   };
   
   const formatTimeUntil = (targetTime: Date): string => {
@@ -162,20 +163,14 @@ export default function SalahSync() {
 
     if (downtimeMode) {
         if (currentDowntimeActivity && downtimeStartTime) {
-            const description = currentDowntimeActivity.type === 'grip' 
-                ? "Time for your 5-minute grip set!" 
-                : currentDowntimeActivity.description;
-            
             setCurrentActivity({ 
                 name: currentDowntimeActivity.name, 
-                description: description, 
+                description: currentDowntimeActivity.description, 
                 startTime: downtimeStartTime, 
                 endTime: addMinutes(downtimeStartTime, currentDowntimeActivity.duration) 
             });
-
             const nextName = quranTurn ? "LeetCode Session" : "Quran Reading";
             const remaining = formatDowntimeTimeUntil(downtimeStartTime, currentDowntimeActivity.duration);
-            
             if (currentDowntimeActivity.type === 'grip') {
               setNextActivity(`Resuming: ${nextName}`);
               setTimeUntilNext('');
@@ -210,8 +205,6 @@ export default function SalahSync() {
       
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const initialSettings = { latitude, longitude, city, timezone, mode: 'strict', mealMode: 'maintenance', lastNotifiedActivity: '', downtime: { lastNotifiedActivity: '', currentActivity: '', activityStartTime: null, lastGripTime: null, gripStrengthEnabled: true, quranTurn: true } };
-      setLocation({ latitude, longitude, city, timezone });
-      localStorage.setItem("salah-sync-location", JSON.stringify({latitude, longitude, city, timezone}));
       await fetch('/api/setup-location', { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(initialSettings) });
       await syncWithServer();
     } catch (err: unknown) {

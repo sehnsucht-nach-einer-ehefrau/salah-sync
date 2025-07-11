@@ -38,6 +38,9 @@ export async function GET(request: NextRequest) {
 
   const now = new Date();
 
+  // =================================================================
+  //  MODE 1: STRICT SCHEDULE
+  // =================================================================
   if (settings.mode === "strict" || !settings.mode) {
     const nowZoned = toZonedTime(now, settings.timezone);
     const prayerTimesResponse = await fetch(
@@ -70,27 +73,37 @@ export async function GET(request: NextRequest) {
         lastNotifiedActivity: current.name,
       });
       return NextResponse.json({
-        status: "notified",
+        status: "notified (strict)",
         new_activity: current.name,
       });
     }
-    return NextResponse.json({ status: "no-change", activity: current.name });
+    return NextResponse.json({
+      status: "no-change (strict)",
+      activity: current.name,
+    });
   }
 
+  // =================================================================
+  //  MODE 2: DOWNTIME SCHEDULE
+  // =================================================================
   if (settings.mode === "downtime") {
     const downtime = settings.downtime || {};
     let newActivityName: string | null = null;
     let newActivityDescription = "";
     const updatedDowntimeState = { ...downtime };
 
-    // This logic now acts as a failsafe or resumes activity after a grip set.
-    const needsResume = downtime.currentActivity === "Starting...";
+    // Self-healing/kickstart logic: Does this session need to be started?
+    const needsKickstart =
+      !downtime.activityStartTime ||
+      !downtime.currentActivity ||
+      downtime.currentActivity === "Starting...";
 
+    // Check for Grip Strength interruption first
     if (downtime.gripStrengthEnabled) {
       const lastGrip = downtime.lastGripTime
         ? new Date(downtime.lastGripTime)
         : null;
-      // Prevent grip notification if a grip set was just completed.
+      // Don't interrupt if we are already in a grip session
       if (
         downtime.currentActivity !== "Grip Strength Training" &&
         (!lastGrip || now.getTime() - lastGrip.getTime() >= 5 * 60 * 1000)
@@ -100,13 +113,14 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // If no grip interruption, check the main A/B loop
     if (!newActivityName) {
       const activityStartTime = downtime.activityStartTime
         ? new Date(downtime.activityStartTime)
         : null;
-      let switchActivity = needsResume;
+      let switchActivity = needsKickstart;
 
-      if (activityStartTime && !needsResume) {
+      if (activityStartTime && !needsKickstart) {
         const minutesPassed =
           (now.getTime() - activityStartTime.getTime()) / 60000;
         if (minutesPassed >= 30) {
@@ -124,6 +138,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // If any new activity was determined, notify and save state
     if (newActivityName && newActivityName !== downtime.lastNotifiedActivity) {
       await sendTelegram(
         `💪 <b>${newActivityName}</b>\n${newActivityDescription}`,

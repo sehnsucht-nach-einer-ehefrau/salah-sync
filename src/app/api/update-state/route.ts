@@ -18,56 +18,42 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const updatedSettings = {
-      ...settings,
-      downtime: settings.downtime || {
-        lastNotifiedActivity: "",
-        currentActivity: "",
-        activityStartTime: null,
-        lastGripTime: null,
-        gripStrengthEnabled: true,
-        quranTurn: true,
-      },
-    };
-    const now = new Date();
+    const updatedSettings = { ...settings };
+    const now = new Date().toISOString();
 
     switch (action) {
       case "toggle_mode":
+        // Flip the mode
         updatedSettings.mode =
           settings.mode === "downtime" ? "strict" : "downtime";
 
-        // --- THIS IS THE CRITICAL FIX ---
-        // When entering downtime, we IMMEDIATELY set up the first activity.
-        // We don't wait for the slow cron job.
-        if (updatedSettings.mode === "downtime") {
-          const firstActivity = updatedSettings.downtime.quranTurn
-            ? "Quran Reading"
-            : "LeetCode Session";
-
-          updatedSettings.downtime.currentActivity = firstActivity;
-          updatedSettings.downtime.activityStartTime = now.toISOString();
-          updatedSettings.downtime.lastNotifiedActivity = ""; // Clear this to ensure the cron job sends a notification
-        } else {
-          updatedSettings.lastNotifiedActivity = ""; // Reset strict mode notification
+        // Reset notification flags to ensure the cron job picks up the change
+        updatedSettings.lastNotifiedActivity = "";
+        if (updatedSettings.downtime) {
+          updatedSettings.downtime.lastNotifiedActivity = "";
+          // This tells the cron job to kickstart the downtime loop
+          updatedSettings.downtime.currentActivity = "Starting...";
         }
         break;
 
       case "set_meal_mode":
-        if (!["bulking", "maintenance", "cutting"].includes(body.mode))
-          throw new Error("Invalid meal mode");
         updatedSettings.mealMode = body.mode;
         break;
 
       case "toggle_grip_enabled":
-        updatedSettings.downtime.gripStrengthEnabled = body.isEnabled;
+        if (updatedSettings.downtime) {
+          updatedSettings.downtime.gripStrengthEnabled = body.isEnabled;
+        }
         break;
 
       case "complete_grip":
-        updatedSettings.downtime.lastGripTime = now.toISOString();
-        // Set state to "Starting..." so the cron job knows to resume the main loop
-        updatedSettings.downtime.currentActivity = "Starting...";
-        updatedSettings.downtime.lastNotifiedActivity =
-          "Grip Strength Training";
+        if (updatedSettings.downtime) {
+          updatedSettings.downtime.lastGripTime = now;
+          // This tells the cron job to resume the main loop
+          updatedSettings.downtime.currentActivity = "Starting...";
+          updatedSettings.downtime.lastNotifiedActivity =
+            "Grip Strength Training";
+        }
         break;
 
       default:
@@ -75,8 +61,9 @@ export async function POST(request: NextRequest) {
     }
 
     await kv.set(userKey, updatedSettings);
-    // We still return the settings so the client can sync, but now the state is already correct.
-    return NextResponse.json({ success: true, settings: updatedSettings });
+    // We don't need to return the full settings anymore, just success.
+    // The client will get the true state from its periodic sync.
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error in update-state:", error);
     const errorMessage =
