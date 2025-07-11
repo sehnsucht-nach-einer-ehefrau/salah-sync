@@ -44,8 +44,6 @@ export default function SalahSync() {
   }, []);
 
   const syncWithServer = useCallback(async () => {
-    // No loading indicator on periodic syncs for a smoother experience
-    // setLoading(true); 
     try {
       const response = await fetch('/api/get-settings');
       if (!response.ok) {
@@ -53,7 +51,6 @@ export default function SalahSync() {
           console.log("Settings not found, awaiting setup.");
           const savedLocationJSON = localStorage.getItem("salah-sync-location");
           if (savedLocationJSON) setLocation(JSON.parse(savedLocationJSON));
-          setLoading(false);
           return;
         }
         throw new Error(`Failed to get settings: ${response.statusText}`);
@@ -63,7 +60,7 @@ export default function SalahSync() {
       
       if (settings.latitude && settings.longitude && settings.timezone) {
         const loc = { latitude: settings.latitude, longitude: settings.longitude, city: settings.city || 'N/A', timezone: settings.timezone };
-        if(!location) setLocation(loc); // Only set if not already set to prevent re-renders
+        if(!location) setLocation(loc);
         if (!prayerTimes) await fetchPrayerTimes(loc.latitude, loc.longitude);
       }
       
@@ -83,7 +80,6 @@ export default function SalahSync() {
             } else if (settings.downtime.currentActivity === "LeetCode Session") {
                 setCurrentDowntimeActivity({ name: "LeetCode Session", description: "Practice coding problems (30 min)", duration: 30, type: "leetcode" });
             } else {
-                // This covers "Starting..." or null cases
                 setCurrentDowntimeActivity(null);
             }
         }
@@ -99,50 +95,56 @@ export default function SalahSync() {
   }, [prayerTimes, fetchPrayerTimes, location]);
 
   useEffect(() => {
+    // Initial load
+    setLoading(true);
     syncWithServer();
     audioRef.current = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT");
     
-    const syncInterval = setInterval(syncWithServer, 20 * 1000); // Check for updates every 20 seconds
+    // Periodic backup sync
+    const syncInterval = setInterval(syncWithServer, 20 * 1000);
     return () => clearInterval(syncInterval);
   }, [syncWithServer]);
   
   useEffect(() => { const timer = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(timer); }, []);
-
-  const updateServerPreference = async (payload: object) => {
+  
+  // --- THIS IS THE FIX ---
+  // A centralized function to perform an action and then immediately sync the result.
+  const performServerAction = async (payload: object) => {
+    setLoading(true); // Start loading indicator
     try {
-      await fetch("/api/update-state", {
+      const res = await fetch("/api/update-state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      // We no longer need to re-sync immediately. We just wait for the next interval.
+      if (!res.ok) throw new Error("API call failed");
+      // After the action is confirmed, immediately fetch the new state from the server.
+      await syncWithServer(); 
     } catch (e) {
-      console.error("Failed to update server preference:", e);
-      setError(e instanceof Error ? e.message : "Update failed.");
+      console.error("Failed to perform server action:", e);
+      setError(e instanceof Error ? e.message : "Action failed.");
+      setLoading(false); // Ensure loading stops on error
     }
   };
 
+  // All user actions now use the new, robust function for instant feedback.
   const toggleDowntimeMode = async () => {
-    // Optimistically update the UI to show we're switching
-    setLoading(true);
-    setCurrentActivity({ name: "Switching Mode...", description: "Waiting for next cycle...", startTime: new Date(), endTime: new Date() });
-    await updateServerPreference({ action: "toggle_mode" });
+    await performServerAction({ action: "toggle_mode" });
     setShowDowntimeDialog(false);
-    // The setInterval will handle the rest.
   };
   
   const handleSetMealMode = (mode: MealMode) => {
-    setMealMode(mode);
-    updateServerPreference({ action: 'set_meal_mode', mode });
+    setMealMode(mode); // Optimistic update for quick UI change
+    performServerAction({ action: 'set_meal_mode', mode });
   };
   
   const handleSetGripEnabled = (isEnabled: boolean) => {
-    setGripStrengthEnabled(isEnabled);
-    updateServerPreference({ action: 'toggle_grip_enabled', isEnabled });
+    setGripStrengthEnabled(isEnabled); // Optimistic update
+    performServerAction({ action: 'toggle_grip_enabled', isEnabled });
   };
   
   const completeGripSet = async () => {
-    await updateServerPreference({ action: 'complete_grip' });
+    await performServerAction({ action: 'complete_grip' });
   };
   
   const formatTimeUntil = (targetTime: Date): string => {
@@ -179,7 +181,7 @@ export default function SalahSync() {
               setTimeUntilNext(`in ${remaining}`);
             }
         } else {
-            setCurrentActivity({ name: "Downtime", description: "Waiting for server to assign activity...", startTime: new Date(), endTime: new Date() });
+            setCurrentActivity({ name: "Downtime", description: "Waiting for next cycle...", startTime: new Date(), endTime: new Date() });
             setNextActivity("");
             setTimeUntilNext("");
         }
