@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
   const now = new Date();
 
   // =================================================================
-  //  MODE 1: STRICT SCHEDULE
+  //  STRICT MODE LOGIC
   // =================================================================
   if (settings.mode === "strict" || !settings.mode) {
     const nowZoned = toZonedTime(now, settings.timezone);
@@ -84,7 +84,7 @@ export async function GET(request: NextRequest) {
   }
 
   // =================================================================
-  //  MODE 2: DOWNTIME SCHEDULE
+  //  DOWNTIME MODE LOGIC
   // =================================================================
   if (settings.mode === "downtime") {
     const downtime = settings.downtime || {};
@@ -92,18 +92,15 @@ export async function GET(request: NextRequest) {
     let newActivityDescription = "";
     const updatedDowntimeState = { ...downtime };
 
-    // Self-healing/kickstart logic: Does this session need to be started?
     const needsKickstart =
       !downtime.activityStartTime ||
       !downtime.currentActivity ||
       downtime.currentActivity === "Starting...";
 
-    // Check for Grip Strength interruption first
     if (downtime.gripStrengthEnabled) {
       const lastGrip = downtime.lastGripTime
         ? new Date(downtime.lastGripTime)
         : null;
-      // Don't interrupt if we are already in a grip session
       if (
         downtime.currentActivity !== "Grip Strength Training" &&
         (!lastGrip || now.getTime() - lastGrip.getTime() >= 5 * 60 * 1000)
@@ -113,7 +110,6 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // If no grip interruption, check the main A/B loop
     if (!newActivityName) {
       const activityStartTime = downtime.activityStartTime
         ? new Date(downtime.activityStartTime)
@@ -138,7 +134,6 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // If any new activity was determined, notify and save state
     if (newActivityName && newActivityName !== downtime.lastNotifiedActivity) {
       await sendTelegram(
         `💪 <b>${newActivityName}</b>\n${newActivityDescription}`,

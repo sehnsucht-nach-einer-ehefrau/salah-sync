@@ -23,15 +23,12 @@ export async function POST(request: NextRequest) {
 
     switch (action) {
       case "toggle_mode":
-        // Flip the mode
         updatedSettings.mode =
           settings.mode === "downtime" ? "strict" : "downtime";
 
-        // Reset notification flags to ensure the cron job picks up the change
         updatedSettings.lastNotifiedActivity = "";
         if (updatedSettings.downtime) {
           updatedSettings.downtime.lastNotifiedActivity = "";
-          // This tells the cron job to kickstart the downtime loop
           updatedSettings.downtime.currentActivity = "Starting...";
         }
         break;
@@ -49,7 +46,6 @@ export async function POST(request: NextRequest) {
       case "complete_grip":
         if (updatedSettings.downtime) {
           updatedSettings.downtime.lastGripTime = now;
-          // This tells the cron job to resume the main loop
           updatedSettings.downtime.currentActivity = "Starting...";
           updatedSettings.downtime.lastNotifiedActivity =
             "Grip Strength Training";
@@ -61,8 +57,6 @@ export async function POST(request: NextRequest) {
     }
 
     await kv.set(userKey, updatedSettings);
-    // We don't need to return the full settings anymore, just success.
-    // The client will get the true state from its periodic sync.
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error in update-state:", error);

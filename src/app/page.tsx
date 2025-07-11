@@ -48,9 +48,9 @@ export default function SalahSync() {
       const response = await fetch('/api/get-settings');
       if (!response.ok) {
         if (response.status === 404) {
-          console.log("Settings not found, awaiting setup.");
           const savedLocationJSON = localStorage.getItem("salah-sync-location");
           if (savedLocationJSON) setLocation(JSON.parse(savedLocationJSON));
+          setLoading(false);
           return;
         }
         throw new Error(`Failed to get settings: ${response.statusText}`);
@@ -95,56 +95,53 @@ export default function SalahSync() {
   }, [prayerTimes, fetchPrayerTimes, location]);
 
   useEffect(() => {
-    // Initial load
     setLoading(true);
     syncWithServer();
     audioRef.current = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT");
     
-    // Periodic backup sync
     const syncInterval = setInterval(syncWithServer, 20 * 1000);
     return () => clearInterval(syncInterval);
   }, [syncWithServer]);
   
   useEffect(() => { const timer = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(timer); }, []);
-  
+
   // --- THIS IS THE FIX ---
-  // A centralized function to perform an action and then immediately sync the result.
-  const performServerAction = async (payload: object) => {
-    setLoading(true); // Start loading indicator
+  // A simple, fast "fire-and-forget" function. It tells the server to change something
+  // but doesn't wait for a response. The periodic sync will show the result.
+  const updateServerPreference = async (payload: object) => {
     try {
-      const res = await fetch("/api/update-state", {
+      await fetch("/api/update-state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error("API call failed");
-      // After the action is confirmed, immediately fetch the new state from the server.
-      await syncWithServer(); 
     } catch (e) {
-      console.error("Failed to perform server action:", e);
-      setError(e instanceof Error ? e.message : "Action failed.");
-      setLoading(false); // Ensure loading stops on error
+      console.error("Failed to update server preference:", e);
+      setError(e instanceof Error ? e.message : "Update failed.");
     }
   };
 
-  // All user actions now use the new, robust function for instant feedback.
   const toggleDowntimeMode = async () => {
-    await performServerAction({ action: "toggle_mode" });
+    // Show a brief loading state for better UX, then send the request.
+    setLoading(true);
+    await updateServerPreference({ action: "toggle_mode" });
     setShowDowntimeDialog(false);
+    // The setInterval will pick up the change shortly and turn off the loading spinner.
   };
   
   const handleSetMealMode = (mode: MealMode) => {
-    setMealMode(mode); // Optimistic update for quick UI change
-    performServerAction({ action: 'set_meal_mode', mode });
+    setMealMode(mode);
+    updateServerPreference({ action: 'set_meal_mode', mode });
   };
   
   const handleSetGripEnabled = (isEnabled: boolean) => {
-    setGripStrengthEnabled(isEnabled); // Optimistic update
-    performServerAction({ action: 'toggle_grip_enabled', isEnabled });
+    setGripStrengthEnabled(isEnabled);
+    updateServerPreference({ action: 'toggle_grip_enabled', isEnabled });
   };
   
   const completeGripSet = async () => {
-    await performServerAction({ action: 'complete_grip' });
+    setLoading(true);
+    await updateServerPreference({ action: 'complete_grip' });
   };
   
   const formatTimeUntil = (targetTime: Date): string => {
