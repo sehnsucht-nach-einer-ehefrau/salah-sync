@@ -30,6 +30,9 @@ export interface DowntimeState {
   lastGripTime: string | null;
   gripStrengthEnabled: boolean;
   quranTurn: boolean;
+  // New properties for pause-and-resume functionality
+  timeRemainingOnPause: number | null; // in milliseconds
+  activityBeforePause: string | null;
 }
 
 export interface UserSettings {

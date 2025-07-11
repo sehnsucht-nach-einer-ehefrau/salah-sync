@@ -42,15 +42,38 @@ const actionHandlers: Record<Action, (settings: UserSettings, body: RequestBody)
       downtime: { ...settings.downtime, gripStrengthEnabled: body.isEnabled },
     };
   },
-  complete_grip: (settings) => ({
-    ...settings,
-    downtime: {
-      ...settings.downtime,
-      lastGripTime: new Date().toISOString(),
-      currentActivity: "Starting...", // Go back to a neutral state
-      lastNotifiedActivity: "Grip Strength Training",
-    },
-  }),
+  complete_grip: (settings) => {
+    const now = new Date();
+    const { downtime } = settings;
+
+    // Default to a neutral state if there was no activity before the pause.
+    let activityToResume = "Starting...";
+    let newActivityStartTime = now.toISOString();
+
+    // If an activity was paused, calculate its new start time to resume it.
+    if (downtime.activityBeforePause && downtime.timeRemainingOnPause) {
+      activityToResume = downtime.activityBeforePause;
+      const thirtyMinutes = 30 * 60 * 1000;
+      // This is the time that had already passed for the activity before it was paused.
+      const timeAlreadyPassed = thirtyMinutes - downtime.timeRemainingOnPause;
+      // Rewind the start time to account for the time that already passed.
+      newActivityStartTime = new Date(now.getTime() - timeAlreadyPassed).toISOString();
+    }
+
+    return {
+      ...settings,
+      downtime: {
+        ...settings.downtime,
+        lastGripTime: now.toISOString(),
+        currentActivity: activityToResume,
+        activityStartTime: newActivityStartTime,
+        lastNotifiedActivity: "Grip Strength Training", // So we don't get a grip notification right away
+        // Clear the pause state
+        timeRemainingOnPause: null,
+        activityBeforePause: null,
+      },
+    };
+  },
 };
 
 // =================================================================

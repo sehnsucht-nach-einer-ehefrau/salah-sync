@@ -70,7 +70,6 @@ async function handleStrictMode(settings: UserSettings) {
 
 async function handleDowntimeMode(settings: UserSettings) {
   const now = new Date();
-  // Ensure downtime object exists with defaults
   const downtime: DowntimeState = {
     ...(settings.downtime || {}),
     gripStrengthEnabled: settings.downtime?.gripStrengthEnabled ?? true,
@@ -79,6 +78,8 @@ async function handleDowntimeMode(settings: UserSettings) {
     currentActivity: settings.downtime?.currentActivity ?? "Starting...",
     activityStartTime: settings.downtime?.activityStartTime ?? null,
     lastGripTime: settings.downtime?.lastGripTime ?? null,
+    timeRemainingOnPause: settings.downtime?.timeRemainingOnPause ?? null,
+    activityBeforePause: settings.downtime?.activityBeforePause ?? null,
   };
 
   let newActivityName: string | null = null;
@@ -88,28 +89,42 @@ async function handleDowntimeMode(settings: UserSettings) {
   // Check 1: Is it time for a grip strength set?
   const lastGripTime = downtime.lastGripTime ? new Date(downtime.lastGripTime) : null;
   const gripInterval = 30 * 60 * 1000; // 30 minutes
+  
   if (downtime.gripStrengthEnabled && downtime.currentActivity !== "Grip Strength Training" && (!lastGripTime || now.getTime() - lastGripTime.getTime() >= gripInterval)) {
     newActivityName = "Grip Strength Training";
     newActivityDescription = "Time for your 5-minute grip set!";
+    
+    // Pause the main activity if it was running
+    if (downtime.currentActivity && downtime.activityStartTime && !["Starting...", "Grip Strength Training"].includes(downtime.currentActivity)) {
+        const startTime = new Date(downtime.activityStartTime);
+        const timePassed = now.getTime() - startTime.getTime();
+        const thirtyMinutes = 30 * 60 * 1000;
+        const timeRemaining = thirtyMinutes - timePassed;
+        
+        if (timeRemaining > 0) {
+            updatedDowntime.timeRemainingOnPause = timeRemaining;
+            updatedDowntime.activityBeforePause = downtime.currentActivity;
+        }
+    }
     updatedDowntime.currentActivity = newActivityName;
-    // Don't update activity start time for grip training
   }
-
-  // Check 2: If not grip training, is it time to switch the main activity?
-  else {
+  
+  // Check 2: If not doing grip training, is it time to switch the main activity?
+  else if (downtime.currentActivity !== "Grip Strength Training") {
     const activityStartTime = downtime.activityStartTime ? new Date(downtime.activityStartTime) : null;
-    // An activity is "over" if it's been 30+ minutes, or if the system is in a neutral state.
     const isActivityOver = !activityStartTime || ["Starting...", "Grip Strength Training"].includes(downtime.currentActivity) || (now.getTime() - activityStartTime.getTime()) / 60000 >= 30;
 
     if (isActivityOver) {
-      // If the last activity was NOT a grip set, flip the turn.
-      const nextQuranTurn = downtime.currentActivity !== "Grip Strength Training" ? !downtime.quranTurn : downtime.quranTurn;
+      const nextQuranTurn = !downtime.quranTurn;
       newActivityName = nextQuranTurn ? "Quran Reading" : "LeetCode Session";
       newActivityDescription = `Starting 30-minute session: ${newActivityName}.`;
       
       updatedDowntime.currentActivity = newActivityName;
       updatedDowntime.activityStartTime = now.toISOString();
       updatedDowntime.quranTurn = nextQuranTurn;
+      // Clear any pause state
+      updatedDowntime.timeRemainingOnPause = null;
+      updatedDowntime.activityBeforePause = null;
     }
   }
 
@@ -118,14 +133,7 @@ async function handleDowntimeMode(settings: UserSettings) {
     await sendTelegram(`💪 <b>${newActivityName}</b>\n${newActivityDescription}`);
     
     const finalDowntimeState = { ...downtime, ...updatedDowntime, lastNotifiedActivity: newActivityName };
-    const finalSettings = { ...settings, downtime: finalDowntimeState };
-    
-    await kv.set("user_settings", finalSettings);
-    
-    // If the mode was just switched back to strict, immediately re-evaluate the schedule
-    if (finalSettings.mode === "strict") {
-        return handleStrictMode(finalSettings);
-    }
+    await kv.set("user_settings", { ...settings, downtime: finalDowntimeState });
     
     return NextResponse.json({ status: "notified (downtime)", new_activity: newActivityName });
   }

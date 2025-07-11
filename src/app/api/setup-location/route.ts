@@ -43,6 +43,8 @@ export async function POST(request: NextRequest) {
         lastGripTime: null,
         gripStrengthEnabled: true,
         quranTurn: true,
+        timeRemainingOnPause: null,
+        activityBeforePause: null,
       },
     };
     
