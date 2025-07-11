@@ -2,7 +2,7 @@
 
 import { kv } from "@vercel/kv";
 import { type NextRequest, NextResponse } from "next/server";
-import { UserSettings, MealMode, AppMode } from "@/lib/types";
+import { UserSettings, MealMode } from "@/lib/types";
 
 // =================================================================
 //  GET SETTINGS
@@ -56,7 +56,7 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
       downtime: {},
     };
   },
-  toggle_mode: (settings, _) => {
+  toggle_mode: (settings) => {
     if (!settings) throw new Error("Cannot toggle mode on uninitialized settings.");
     return {
       ...settings,

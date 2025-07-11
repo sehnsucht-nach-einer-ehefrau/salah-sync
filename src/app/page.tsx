@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ScheduleItem, MealMode, AppMode, UserSettings } from "@/lib/types";
+import { ScheduleItem, MealMode, UserSettings } from "@/lib/types";
 import { LocationPrompt } from "@/components/LocationPrompt";
 import { LoadingState } from "@/components/LoadingState";
 import { ScheduleView } from "@/components/ScheduleView";
@@ -28,7 +28,7 @@ export default function SalahSync() {
     error: null,
   });
 
-  const handleError = (message: string, error?: any) => {
+  const handleError = (message: string, error?: unknown) => {
     console.error(message, error);
     setViewState(prev => ({ ...prev, loading: false, error: message }));
   };
@@ -194,7 +194,7 @@ export default function SalahSync() {
 
   const formatTimeUntil = (targetTime: Date): string => {
     if (!targetTime) return "";
-    let diff = targetTime.getTime() - new Date().getTime();
+    const diff = targetTime.getTime() - new Date().getTime();
     if (diff < 0) return "Now";
     const hours = Math.floor(diff / 3600000);
     const minutes = Math.floor((diff % 3600000) / 60000);

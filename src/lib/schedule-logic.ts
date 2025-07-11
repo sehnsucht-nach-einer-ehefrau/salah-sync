@@ -46,7 +46,7 @@ function getWorkoutForDay(day: number): DailyWorkout {
   const running = { name: "Running", duration: WORKOUT_DURATIONS.RUN };
   const shower = { name: "Optional Cold Shower", duration: WORKOUT_DURATIONS.COLD_SHOWER };
 
-  const workouts: Record<number, { name: string; components: any[] }> = {
+  const workouts: Record<number, { name: string; components: { name: string; duration: number }[] }> = {
     1: { name: "Push Day", components: [{ name: "Bench Press (4x6), Dips (3x12), Incline DB (3x8)", duration: WORKOUT_DURATIONS.BARBELL }, ...calisthenics, running, shower] },
     2: { name: "Muay Thai Conditioning", components: [{ name: "Shadowboxing, Heavy Bag, Core", duration: WORKOUT_DURATIONS.MUAY_THAI }, running, shower] },
     3: { name: "Leg Day", components: [{ name: "Barbell Squats (4x8), RDL (3x10), Lunges (3x20)", duration: WORKOUT_DURATIONS.BARBELL }, ...calisthenics, running, shower] },
@@ -171,7 +171,7 @@ export function calculateSchedule(
 
   const schedule = buildTimeline();
 
-  let currentIndex = schedule.findIndex(item => now >= item.startTime && now < item.endTime);
+  const currentIndex = schedule.findIndex(item => now >= item.startTime && now < item.endTime);
   if (currentIndex === -1) {
     // Handle transitions between activities
     const nextActivityIndex = schedule.findIndex(item => item.startTime > now);
