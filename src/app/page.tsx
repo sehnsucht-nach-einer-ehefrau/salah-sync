@@ -126,6 +126,9 @@ export default function SalahSync() {
       console.error("Failed to update server preference:", e);
       setError(e instanceof Error ? e.message : "Update failed.");
       await syncWithServer(true);
+    } finally {
+      // This ensures the loading spinner is always turned off after the operation.
+      setLoading(false);
     }
   };
 
