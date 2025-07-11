@@ -18,18 +18,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const updatedSettings = { ...settings };
+    const updatedSettings = {
+      ...settings,
+      downtime: settings.downtime || {
+        lastNotifiedActivity: "",
+        currentActivity: "",
+        activityStartTime: null,
+        lastGripTime: null,
+        gripStrengthEnabled: true,
+        quranTurn: true,
+      },
+    };
     const now = new Date().toISOString();
 
     switch (action) {
       case "toggle_mode":
         updatedSettings.mode =
           settings.mode === "downtime" ? "strict" : "downtime";
-        if (updatedSettings.mode === "strict") {
-          updatedSettings.lastNotifiedActivity = "";
-        } else {
+
+        if (updatedSettings.mode === "downtime") {
+          updatedSettings.downtime.currentActivity = "Starting...";
           updatedSettings.downtime.lastNotifiedActivity = "";
-          updatedSettings.downtime.activityStartTime = now;
+        } else {
+          updatedSettings.lastNotifiedActivity = "";
         }
         break;
 
@@ -45,6 +56,9 @@ export async function POST(request: NextRequest) {
 
       case "complete_grip":
         updatedSettings.downtime.lastGripTime = now;
+        updatedSettings.downtime.currentActivity = "Starting...";
+        updatedSettings.downtime.lastNotifiedActivity =
+          "Grip Strength Training";
         break;
 
       default:
@@ -55,9 +69,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, settings: updatedSettings });
   } catch (error) {
     console.error("Error in update-state:", error);
-    return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 },
-    );
+    const errorMessage =
+      error instanceof Error ? error.message : "Internal Server Error";
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

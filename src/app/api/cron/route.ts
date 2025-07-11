@@ -41,7 +41,11 @@ export async function GET(request: NextRequest) {
   if (settings.mode === "strict" || !settings.mode) {
     const nowZoned = toZonedTime(now, settings.timezone);
     const prayerTimesResponse = await fetch(
-      `https://api.aladhan.com/v1/timings/${nowZoned.getDate()}-${nowZoned.getMonth() + 1}-${nowZoned.getFullYear()}?latitude=${settings.latitude}&longitude=${settings.longitude}&method=2`,
+      `https://api.aladhan.com/v1/timings/${nowZoned.getDate()}-${
+        nowZoned.getMonth() + 1
+      }-${nowZoned.getFullYear()}?latitude=${settings.latitude}&longitude=${
+        settings.longitude
+      }&method=2`,
     );
     const prayerData = await prayerTimesResponse.json();
     const prayerTimes: PrayerTimes = prayerData.data?.timings;
@@ -79,6 +83,11 @@ export async function GET(request: NextRequest) {
     let newActivityDescription = "";
     const updatedDowntimeState = { ...downtime };
 
+    const needsKickstart =
+      !downtime.activityStartTime ||
+      !downtime.currentActivity ||
+      downtime.currentActivity === "Starting...";
+
     if (downtime.gripStrengthEnabled) {
       const lastGrip = downtime.lastGripTime
         ? new Date(downtime.lastGripTime)
@@ -86,7 +95,6 @@ export async function GET(request: NextRequest) {
       if (!lastGrip || now.getTime() - lastGrip.getTime() >= 5 * 60 * 1000) {
         newActivityName = "Grip Strength Training";
         newActivityDescription = "Time for your 5-minute grip set!";
-        updatedDowntimeState.lastGripTime = now.toISOString();
       }
     }
 
@@ -94,11 +102,9 @@ export async function GET(request: NextRequest) {
       const activityStartTime = downtime.activityStartTime
         ? new Date(downtime.activityStartTime)
         : null;
-      let switchActivity =
-        !activityStartTime ||
-        !downtime.currentActivity ||
-        downtime.currentActivity === "Starting...";
-      if (activityStartTime) {
+      let switchActivity = needsKickstart;
+
+      if (activityStartTime && !needsKickstart) {
         const minutesPassed =
           (now.getTime() - activityStartTime.getTime()) / 60000;
         if (minutesPassed >= 30) {
@@ -131,7 +137,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       status: "no-change (downtime)",
-      activity: downtime.currentActivity,
+      activity: downtime.currentActivity || "Waiting...",
     });
   }
 

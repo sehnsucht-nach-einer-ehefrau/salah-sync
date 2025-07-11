@@ -22,11 +22,11 @@ export interface ScheduleItem {
 }
 export type MealMode = "bulking" | "maintenance" | "cutting";
 
-// Added a shared UserSettings type for type safety across the app
 export interface UserSettings {
   latitude: number;
   longitude: number;
   timezone: string;
+  city?: string; // <<< FIX: Added city property to match saved data
   mode: "strict" | "downtime";
   mealMode: MealMode;
   lastNotifiedActivity: string;
