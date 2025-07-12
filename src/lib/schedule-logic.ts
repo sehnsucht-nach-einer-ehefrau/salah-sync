@@ -24,6 +24,7 @@ const createPrayerScheduleItem = (name: string, time: Date, duration: number): S
     endTime: addMinutes(time, duration),
     isPrayer: true,
     id: name.toLowerCase(),
+    isCustom: false,
 });
 
 export function calculateSchedule(
@@ -31,18 +32,56 @@ export function calculateSchedule(
   prayerTimes: PrayerTimes,
 ): { schedule: ScheduleItem[], current: ScheduleItem; next: ScheduleItem } {
   const { timezone, customActivities: userSchedule = [] } = settings;
+
+  if (!timezone) {
+    const now = new Date();
+    const errorItem: ScheduleItem = {
+      id: 'error',
+      name: 'Configuration Error',
+      description: 'Timezone is not set in user settings.',
+      startTime: now,
+      endTime: now,
+      isPrayer: false,
+      isCustom: false,
+    };
+    return { schedule: [errorItem], current: errorItem, next: errorItem };
+  }
+
   const now = toZonedTime(new Date(), timezone);
   const today = new Date(now);
   today.setHours(0, 0, 0, 0);
   const tomorrow = addMinutes(today, 24 * 60);
 
+  type ValidatedPrayerTimes = { [K in Exclude<keyof PrayerTimes, 'Sunrise' | 'NextFajr'>]: string };
+  const validatedPrayerTimes = {} as ValidatedPrayerTimes;
+
+  const requiredPrayers: (keyof ValidatedPrayerTimes)[] = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+
+  for (const prayer of requiredPrayers) {
+    const time = prayerTimes[prayer];
+    if (!time) {
+      const errorItem: ScheduleItem = {
+        id: 'error',
+        name: 'Configuration Error',
+        description: `Missing prayer time for ${prayer}`,
+        startTime: now,
+        endTime: now,
+        isPrayer: false,
+        isCustom: false,
+      };
+      return { schedule: [errorItem], current: errorItem, next: errorItem };
+    }
+    validatedPrayerTimes[prayer] = time;
+  }
+
+  // The validatedPrayerTimes object is now guaranteed to be populated with strings.
   const prayerDateTimes = {
-    Fajr: parseTime(prayerTimes.Fajr, timezone, today),
-    Dhuhr: parseTime(prayerTimes.Dhuhr, timezone, today),
-    Asr: parseTime(prayerTimes.Asr, timezone, today),
-    Maghrib: parseTime(prayerTimes.Maghrib, timezone, today),
-    Isha: parseTime(prayerTimes.Isha, timezone, today),
-    NextFajr: parseTime(prayerTimes.Fajr, timezone, tomorrow),
+    Fajr: parseTime(validatedPrayerTimes.Fajr, timezone, today),
+    Dhuhr: parseTime(validatedPrayerTimes.Dhuhr, timezone, today),
+    Asr: parseTime(validatedPrayerTimes.Asr, timezone, today),
+    Maghrib: parseTime(validatedPrayerTimes.Maghrib, timezone, today),
+    Isha: parseTime(validatedPrayerTimes.Isha, timezone, today),
+    NextFajr: parseTime(validatedPrayerTimes.Fajr, timezone, tomorrow),
   };
 
   const timeline: ScheduleItem[] = [];
@@ -90,6 +129,7 @@ export function calculateSchedule(
       startTime: tahajjudStartTime,
       endTime: addMinutes(tahajjudStartTime, tahajjudDuration),
       isPrayer: true,
+      isCustom: false,
     });
   }
 
@@ -101,6 +141,7 @@ export function calculateSchedule(
     startTime: sleepStartTime,
     endTime: addMinutes(sleepStartTime, sleepDuration),
     isPrayer: false, // Not a prayer, but a core activity
+    isCustom: false,
   });
 
   // 3. Add Meals and Nap
@@ -111,6 +152,7 @@ export function calculateSchedule(
     startTime: fajr.endTime,
     endTime: addMinutes(fajr.endTime, 30),
     isPrayer: false,
+    isCustom: false,
   };
   timeline.push(breakfast);
 
@@ -123,6 +165,7 @@ export function calculateSchedule(
       startTime: dhuhr.endTime,
       endTime: addMinutes(dhuhr.endTime, sleepDeficit),
       isPrayer: false,
+      isCustom: false,
     };
     timeline.push(nap);
     postDhuhrActivityStart = nap.endTime;
@@ -135,6 +178,7 @@ export function calculateSchedule(
     startTime: postDhuhrActivityStart,
     endTime: addMinutes(postDhuhrActivityStart, 30),
     isPrayer: false,
+    isCustom: false,
   };
   timeline.push(lunch);
 
@@ -145,6 +189,7 @@ export function calculateSchedule(
     startTime: addMinutes(maghrib.startTime, -30),
     endTime: maghrib.startTime,
     isPrayer: false,
+    isCustom: false,
   };
   timeline.push(dinner);
 
@@ -196,6 +241,7 @@ export function calculateSchedule(
           startTime: currentTime,
           endTime: endTime,
           isPrayer: false,
+          isCustom: true,
         });
         currentTime = endTime;
         activityCursor++;
@@ -223,6 +269,7 @@ export function calculateSchedule(
         startTime: prevEndTime,
         endTime: sortedSchedule[nextActivityIndex].startTime,
         isPrayer: false,
+        isCustom: false,
       };
       // Only add transition if it's not overlapping
       if (currentItem.startTime < currentItem.endTime) {
@@ -237,7 +284,7 @@ export function calculateSchedule(
     currentIndex = sortedSchedule.length - 1; // Default to last known activity
   }
 
-  const current = sortedSchedule[currentIndex] || { name: "Error", description: "Could not determine current activity.", startTime: now, endTime: now, isPrayer: false, id: "error" };
+  const current = sortedSchedule[currentIndex] || { name: "Error", description: "Could not determine current activity.", startTime: now, endTime: now, isPrayer: false, id: "error", isCustom: false };
   const next = sortedSchedule[(currentIndex + 1) % sortedSchedule.length] || current;
   
   return { schedule: sortedSchedule, current, next };

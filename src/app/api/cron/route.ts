@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
 
   const now = toZonedTime(new Date(), settings.timezone);
 
-  if (settings.mode === "strict") {
+  if (!settings.downtimeMode) {
     // STRICT MODE LOGIC
     const { latitude, longitude, timezone, lastNotifiedActivity } = settings;
 
@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ status: "no-change (strict)", activity: current?.name || 'N/A' });
 
-  } else if (settings.mode === "downtime") {
+  } else {
     // DOWNTIME MODE LOGIC (Cron Job)
     const { downtime, lastNotifiedActivity } = settings;
 
@@ -64,5 +64,4 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ status: "no-change (downtime)", activity: currentActivity?.name || "N/A" });
   }
 
-  return NextResponse.json({ status: "skipped", reason: `Unknown mode: ${settings.mode}` });
 } 

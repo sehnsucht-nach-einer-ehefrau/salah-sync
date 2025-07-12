@@ -69,21 +69,15 @@ function AddActivityForm({ onAddActivity, afterActivityId }: { onAddActivity: Sc
 
 const CORE_ACTIVITY_IDS = ['sleep', 'tahajjud', 'breakfast', 'lunch', 'dinner', 'nap', 'transition'];
 
-function SortableScheduleItem({ item, downtimeMode, onRemoveActivity, onAddActivity, formatScheduleTime }: { item: ScheduleItem, downtimeMode: boolean, onRemoveActivity: (id: string) => void, onAddActivity: ScheduleViewProps['onAddActivity'], formatScheduleTime: (date: Date) => string }) {
-    const {
-        attributes,
-        listeners,
-        setNodeRef,
-        transform,
-        transition,
-    } = useSortable({id: item.id});
+function SortableScheduleItem({ item, downtimeMode, onRemoveActivity, formatScheduleTime }: { item: ScheduleItem, downtimeMode: boolean, onRemoveActivity: (id: string) => void, formatScheduleTime: (date: Date) => string }) {
+    const isEditable = !item.isPrayer && !CORE_ACTIVITY_IDS.includes(item.id);
+
+    const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: item.id, disabled: !isEditable });
 
     const style = {
         transform: CSS.Transform.toString(transform),
         transition,
     };
-
-    const isEditable = !item.isPrayer && !CORE_ACTIVITY_IDS.includes(item.id);
 
     return (
         <div ref={setNodeRef} style={style}>
@@ -108,24 +102,6 @@ function SortableScheduleItem({ item, downtimeMode, onRemoveActivity, onAddActiv
                     )}
                 </div>
             </div>
-            {isEditable && (
-            <Dialog>
-                <DialogTrigger asChild>
-                    <div className="flex items-center justify-center -my-2">
-                        <button className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-400 py-1">
-                            <PlusCircle className="h-3 w-3"/>
-                            <span>Add Activity</span>
-                        </button>
-                    </div>
-                </DialogTrigger>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Add Activity After &quot;{item.name}&quot;</DialogTitle>
-                    </DialogHeader>
-                    <AddActivityForm onAddActivity={onAddActivity} afterActivityId={item.id} />
-                </DialogContent>
-            </Dialog>
-            )}
         </div>
     )
 }
@@ -149,11 +125,12 @@ export function ScheduleView({
             const newIndex = schedule.findIndex(item => item.id === over.id);
             if (oldIndex === -1 || newIndex === -1) return;
             const oldItem = schedule[oldIndex];
-            const newItem = schedule[newIndex];
 
             const isUneditable = (item: ScheduleItem) => item.isPrayer || CORE_ACTIVITY_IDS.includes(item.id);
 
-            if (isUneditable(oldItem) || isUneditable(newItem)) return;
+            // Prevent dragging of uneditable items. This is a safeguard, 
+            // the primary mechanism is disabling the sortable item itself.
+            if (isUneditable(oldItem)) return;
 
             const reorderedSchedule = arrayMove(schedule, oldIndex, newIndex);
             
@@ -176,7 +153,7 @@ export function ScheduleView({
         }
     };
 
-    const scheduleIds = schedule.filter(item => !item.isPrayer && !CORE_ACTIVITY_IDS.includes(item.id)).map(item => item.id);
+    const scheduleIds = schedule.map(item => item.id);
 
     return (
         <div className="w-full max-w-2xl mx-auto p-4">
@@ -187,29 +164,28 @@ export function ScheduleView({
                             <SortableScheduleItem 
                                 key={item.id} 
                                 item={item} 
-                                downtimeMode={downtimeMode} 
-                                onRemoveActivity={onRemoveActivity} 
-                                onAddActivity={onAddActivity}
+                                downtimeMode={downtimeMode}
+                                onRemoveActivity={onRemoveActivity}
                                 formatScheduleTime={formatScheduleTime}
                             />
                         ))}
                     </SortableContext>
                 </DndContext>
-
-                <Dialog>
-                    <DialogTrigger asChild>
-                        <Button variant="outline" className={`w-full mt-4 ${downtimeMode ? "border-gray-700 hover:bg-gray-800" : ""}`}>
-                            <PlusCircle className="h-4 w-4 mr-2" /> Add Activity
-                        </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                        <DialogHeader>
-                            <DialogTitle>Add New Activity</DialogTitle>
-                        </DialogHeader>
-                        <AddActivityForm onAddActivity={onAddActivity} />
-                    </DialogContent>
-                </Dialog>
             </Card>
+
+            <Dialog>
+                <DialogTrigger asChild>
+                    <Button className="fixed bottom-8 right-8 h-16 w-16 rounded-full shadow-lg z-50">
+                        <PlusCircle className="h-8 w-8" />
+                    </Button>
+                </DialogTrigger>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Add New Activity</DialogTitle>
+                    </DialogHeader>
+                    <AddActivityForm onAddActivity={onAddActivity} />
+                </DialogContent>
+            </Dialog>
         </div>
     )
 } 

@@ -58,7 +58,7 @@ export async function GET() {
 //  UPDATE SETTINGS (POST)
 // =================================================================
 
-type Action = "toggle_mode" | "set_meal_mode" | "toggle_grip_enabled" | "setup_location" | "add_activity" | "remove_activity" | "add_meal_log" | "update_activities" | "next_downtime_activity" | "start_grip_strength" | "resume_downtime_activity";
+type Action = "toggle_mode" | "set_meal_mode" | "toggle_grip_enabled" | "setup_location" | "add_activity" | "remove_activity" | "log_meal" | "update_activities" | "next_downtime_activity" | "start_grip_strength" | "resume_downtime_activity";
 
 interface RequestBody {
   action: Action;
@@ -82,22 +82,24 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
       throw new Error("Missing location data for setup.");
     }
     return {
-      latitude,
-      longitude,
-      city,
-      timezone,
-      method: 2, // ISNA
-      school: 1, // Hanafi
-      mode: 'strict',
-      customActivities: defaultCustomActivities,
-      mealMode: 'maintenance',
-      meals: {
-        cutting: { breakfast: "", lunch: "", dinner: "" },
-        maintenance: { breakfast: "", lunch: "", dinner: "" },
-        bulking: { breakfast: "", lunch: "", dinner: "" },
+      location: {
+        city,
+        country: 'USA', // Country was not stored before, add a default
+        latitude,
+        longitude,
       },
-      lastNotifiedActivity: "",
-      mealLog: [],
+      calculationMethod: '2', // ISNA
+      madhab: 'hanafi', // Hanafi
+      customActivities: defaultCustomActivities,
+      downtimeMode: false, // Add missing downtimeMode property
+      mealMode: 'maintain',
+      meals: {
+        cut: { breakfast: '', lunch: '', dinner: '' },
+        maintain: { breakfast: '', lunch: '', dinner: '' },
+        bulk: { breakfast: '', lunch: '', dinner: '' },
+      },
+      foodLog: [], // Correctly named property
+      lastNotifiedActivity: null,
     };
   },
   add_activity: (settings, body) => {
@@ -134,10 +136,10 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
   toggle_mode: (settings) => {
     if (!settings) throw new Error("Cannot toggle mode on uninitialized settings.");
     
-    const newMode = settings.mode === "downtime" ? "strict" : "downtime";
+    const newMode = settings.downtimeMode ? false : true;
     let downtime = settings.downtime;
 
-    if (newMode === 'downtime' && (!downtime || !downtime.activities || downtime.activities.length === 0)) {
+    if (newMode && (!downtime || !downtime.activities || downtime.activities.length === 0)) {
       const defaultDowntimeActivities: CustomActivity[] = [
         { id: 'quran-downtime', name: "Quran Reading", type: 'action', duration: 30 },
         { id: 'leetcode-downtime', name: "LeetCode Session", type: 'action', duration: 30 },
@@ -148,12 +150,14 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
         currentActivityStartTime: Date.now(),
         gripStrengthEnabled: true,
         lastGripTime: 0,
+        startTime: "22:00", // Add default start time
+        endTime: "06:00",   // Add default end time
       };
     }
 
     return {
       ...settings,
-      mode: newMode,
+      downtimeMode: newMode,
       lastNotifiedActivity: "",
       downtime,
     };
@@ -175,12 +179,12 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
       downtime: { ...settings.downtime, gripStrengthEnabled: body.isEnabled },
     };
   },
-  add_meal_log: (settings, body) => {
-    if (!settings) throw new Error("Cannot add meal log to uninitialized settings.");
+  log_meal: (settings, body) => {
+    if (!settings) throw new Error("Cannot log meal to uninitialized settings.");
     if (!body.meal) throw new Error("Meal data is missing.");
-    const newLog = { meal: body.meal.description, timestamp: Date.now() };
-    const mealLog = [ ...(settings.mealLog || []), newLog ];
-    return { ...settings, mealLog };
+    const newLog = { entry: body.meal.description, timestamp: new Date().toISOString() };
+    const foodLog = [ ...(settings.foodLog || []), newLog ];
+    return { ...settings, foodLog };
   },
   update_activities: (settings, body) => {
     if (!settings) throw new Error("Cannot update activities on uninitialized settings.");

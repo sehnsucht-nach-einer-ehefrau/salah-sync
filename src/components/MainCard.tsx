@@ -69,11 +69,12 @@ export function MainCard({
 }: MainCardProps) {
 
   
-  const mealButtons: {type: MealMode, icon: React.ReactNode}[] = [
-    { type: 'cutting', icon: <ChevronsDown size={18}/> },
-    { type: 'maintenance', icon: <Weight size={18}/> },
-    { type: 'bulking', icon: <Utensils size={18}/> },
-  ];
+    const mealButtons: {type: MealMode, icon: React.ReactNode, tooltip: string}[] = [
+      { type: 'cut', icon: <ChevronsDown size={18}/>, tooltip: 'Cutting' },
+      { type: 'maintain', icon: <Weight size={18}/>, tooltip: 'Maintenance' },
+      { type: 'bulk', icon: <Utensils size={18}/>, tooltip: 'Bulking' },
+      { type: 'log', icon: <List size={18}/>, tooltip: 'Log Meal' },
+    ];
 
   return (
     <div className={`w-full flex flex-col items-center justify-center p-4`}>
@@ -90,41 +91,62 @@ export function MainCard({
                 <TooltipContent><p>Show/Hide Schedule</p></TooltipContent>
               </Tooltip>
             </div>
-            <div className="absolute top-3 right-3 flex gap-1">
-              
-              {!downtimeMode && mealButtons.map(({ type, icon }) => {
-                const isSelected = mealMode === type;
-                return (
-                  <Popover key={type}>
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <PopoverTrigger asChild disabled={!isSelected}>
+            <div className="absolute top-3 right-3 flex items-center gap-2">
+              {!downtimeMode && (
+                <div className="flex items-center p-0.5 rounded-full bg-gray-100 gap-0.5">
+                  {mealButtons.slice(0, 2).map(({ type, icon, tooltip }) => {
+                    const isSelected = mealMode === type;
+                    return (
+                      <TooltipProvider key={type}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
                             <Button
                               variant="ghost"
                               size="icon"
-                              className={`h-8 w-8 rounded-full ${isSelected ? 'bg-gray-200 text-black' : 'text-gray-500 hover:bg-gray-100'}`}
-                              onClick={() => {
-                                if (!isSelected) {
-                                  handleSetMealMode(type);
-                                }
-                              }}
+                              className={`relative h-8 w-8 rounded-full ${isSelected ? 'bg-white text-black shadow-sm' : 'text-gray-500 hover:bg-white/80'}`}
+                              onClick={() => handleSetMealMode(type)}
                             >
                               {icon}
+                              {isSelected && <div className="absolute bottom-1.5 h-1 w-1 rounded-full bg-blue-500"></div>}
                             </Button>
-                          </PopoverTrigger>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>{type.charAt(0).toUpperCase() + type.slice(1)}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                    <PopoverContent className="w-80">
-                      <MealEntryForm mealType={type} onLogMeal={(desc) => handleLogMeal(type, desc)} />
-                    </PopoverContent>
-                  </Popover>
-                );
-              })}
+                          </TooltipTrigger>
+                          <TooltipContent><p>{tooltip}</p></TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    );
+                  })}
+                  <div className="flex bg-gray-200/80 rounded-full">
+                    {mealButtons.slice(2, 4).map(({ type, icon, tooltip }) => {
+                      const isSelected = mealMode === type;
+                      return (
+                        <Popover key={type}>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <PopoverTrigger asChild disabled={type === 'bulk' && !isSelected}>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className={`relative h-8 w-8 rounded-full ${isSelected ? 'bg-white text-black shadow-sm' : 'text-gray-500 hover:bg-white/80'}`}
+                                    onClick={() => handleSetMealMode(type)}
+                                  >
+                                    {icon}
+                                    {isSelected && <div className="absolute bottom-1.5 h-1 w-1 rounded-full bg-blue-500"></div>}
+                                  </Button>
+                                </PopoverTrigger>
+                              </TooltipTrigger>
+                              <TooltipContent><p>{tooltip}</p></TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                          <PopoverContent className="w-80">
+                            <MealEntryForm mealType={type} onLogMeal={(desc) => handleLogMeal(type, desc)} />
+                          </PopoverContent>
+                        </Popover>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {downtimeMode && (
                 <Tooltip>
                   <TooltipTrigger asChild><Button onClick={() => handleSetGripEnabled(!gripStrengthEnabled)} variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-white/10"><Hand className={`h-5 w-5 transition-colors ${gripStrengthEnabled ? "text-white" : "text-gray-600"}`} /></Button></TooltipTrigger>

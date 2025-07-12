@@ -94,6 +94,7 @@ export default function HomePage() {
         endTime: endTime,
         isPrayer: false,
         id: `downtime-${downtime.currentActivityIndex}`,
+        isCustom: true,
       };
 
       // The schedule view in downtime mode will show the list of configured downtime activities.
@@ -104,6 +105,7 @@ export default function HomePage() {
         endTime: new Date(),   // Placeholder, not used for display
         isPrayer: false,
         id: `downtime-config-${index}`,
+        isCustom: true,
       }));
       
       setViewState(prev => ({
@@ -111,7 +113,7 @@ export default function HomePage() {
         settings,
         schedule: downtimeSchedule,
         currentActivity: currentActivity,
-        nextActivity: { name: "Downtime", description: "Next activity will start after this.", startTime: endTime, endTime: endTime, isPrayer: false, id: 'downtime-next' },
+        nextActivity: { name: "Downtime", description: "Next activity will start after this.", startTime: endTime, endTime: endTime, isPrayer: false, id: 'downtime-next', isCustom: false },
         timeUntilNext: formatTimeUntil(endTime),
         loading: false,
         error: null,
@@ -323,7 +325,7 @@ export default function HomePage() {
       } catch (e) { console.warn("Could not get city name:", e); }
       
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const initialSettings: Partial<UserSettings> = { latitude, longitude, city, timezone, mode: 'strict', mealMode: 'maintenance', lastNotifiedActivity: '' };
+            const initialSettings: Partial<UserSettings> = { latitude, longitude, city, timezone, downtimeMode: false, mealMode: 'maintain', lastNotifiedActivity: '' };
       
       await updateServer({ action: 'setup_location', ...initialSettings }); // A new action
       await syncWithServer();
