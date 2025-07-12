@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ScheduleItem, MealMode, UserSettings } from "@/lib/types";
+import { ScheduleItem, MealMode, UserSettings, CustomActivity } from "@/lib/types";
 import { LocationPrompt } from "@/components/LocationPrompt";
 import { LoadingState } from "@/components/LoadingState";
 import { ScheduleView } from "@/components/ScheduleView";
@@ -45,7 +45,7 @@ export default function SalahSync() {
       const data = await res.json();
       if (!data.data || !data.data.timings) throw new Error("Invalid prayer times data");
       
-      const { schedule, current, next } = calculateSchedule(data.data.timings, settings.timezone, settings.mealMode);
+      const { schedule, current, next } = calculateSchedule(settings, data.data.timings);
       
       return { schedule, current, next };
     } catch (err) {
@@ -95,6 +95,7 @@ export default function SalahSync() {
             description: settings.downtime.lastNotifiedActivity || "Downtime activity in progress.",
             startTime: new Date(activityStartTime),
             endTime: endTime,
+            isPrayer: false,
           };
         }
       }
@@ -162,6 +163,13 @@ export default function SalahSync() {
   const handleSetMealMode = (mode: MealMode) => updateServer({ action: 'set_meal_mode', mode });
   const handleSetGripEnabled = (isEnabled: boolean) => updateServer({ action: 'toggle_grip_enabled', isEnabled });
 
+  const handleAddActivity = (activity: Omit<CustomActivity, 'id'>, afterActivityId: string) => {
+    updateServer({ action: 'add_activity', activity, afterActivityId });
+  };
+  const handleRemoveActivity = (activityId: string) => {
+    updateServer({ action: 'remove_activity', activityId });
+  };
+
   const requestLocation = async () => {
     setViewState(prev => ({ ...prev, loading: true, error: null }));
     try {
@@ -220,6 +228,8 @@ export default function SalahSync() {
       toggleDowntimeMode={toggleDowntimeMode}
       schedule={viewState.schedule || []}
       city={viewState.settings.city || "Unknown"}
+      onAddActivity={handleAddActivity}
+      onRemoveActivity={handleRemoveActivity}
     />
   );
 }

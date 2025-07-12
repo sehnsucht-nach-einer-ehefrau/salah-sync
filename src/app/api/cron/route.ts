@@ -23,14 +23,14 @@ export async function GET(request: NextRequest) {
 
   if (settings.mode === "strict") {
     // STRICT MODE LOGIC
-    const { latitude, longitude, timezone, mealMode = 'maintenance', lastNotifiedActivity } = settings;
+    const { latitude, longitude, timezone, lastNotifiedActivity } = settings;
 
     const prayerTimes = await getPrayerTimes(latitude, longitude, timezone);
     if (!prayerTimes) {
       return NextResponse.json({ error: "Failed to get prayer times for strict mode." }, { status: 500 });
     }
 
-    const { current } = calculateSchedule(prayerTimes, timezone, mealMode);
+    const { current } = calculateSchedule(settings, prayerTimes);
 
     if (current.name !== lastNotifiedActivity && current.name !== "Transition") {
       await sendTelegram(`🕐 <b>${current.name}</b>\n${current.description}`);

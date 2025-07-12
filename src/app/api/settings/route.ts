@@ -2,7 +2,8 @@
 
 import { kv } from "@vercel/kv";
 import { type NextRequest, NextResponse } from "next/server";
-import { UserSettings, MealMode } from "@/lib/types";
+import { UserSettings, MealMode, CustomActivity } from "@/lib/types";
+import { randomUUID } from "crypto";
 
 // =================================================================
 //  GET SETTINGS
@@ -27,16 +28,24 @@ export async function GET() {
 //  UPDATE SETTINGS (POST)
 // =================================================================
 
-type Action = "toggle_mode" | "set_meal_mode" | "toggle_grip_enabled" | "setup_location";
+type Action = "toggle_mode" | "set_meal_mode" | "toggle_grip_enabled" | "setup_location" | "add_activity" | "remove_activity";
 
 interface RequestBody {
   action: Action;
+  // For set_meal_mode
   mode?: MealMode;
+  // For toggle_grip_enabled
   isEnabled?: boolean;
+  // For setup_location
   latitude?: number;
   longitude?: number;
   city?: string;
   timezone?: string;
+  // For add_activity
+  activity?: Omit<CustomActivity, 'id'>;
+  afterActivityId?: string; // ID of the activity to insert after
+  // For remove_activity
+  activityId?: string;
 }
 
 const actionHandlers: Record<Action, (settings: UserSettings | null, body: RequestBody) => UserSettings> = {
@@ -54,7 +63,38 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
       mealMode: 'maintenance',
       lastNotifiedActivity: "",
       downtime: {},
+      schedule: [
+        { id: 'fajr', name: 'Fajr', type: 'action', duration: 15 },
+        { id: 'dhuhr', name: 'Dhuhr', type: 'action', duration: 15 },
+        { id: 'asr', name: 'Asr', type: 'action', duration: 15 },
+        { id: 'maghrib', name: 'Maghrib', type: 'action', duration: 15 },
+        { id: 'isha', name: 'Isha', type: 'action', duration: 15 },
+      ],
     };
+  },
+  add_activity: (settings, body) => {
+    if (!settings) throw new Error("Cannot add activity to uninitialized settings.");
+    if (!body.activity) throw new Error("Activity data is missing.");
+    if (!body.afterActivityId) throw new Error("Target activity ID is missing.");
+
+    const newActivity: CustomActivity = { ...body.activity, id: randomUUID() };
+    const targetIndex = settings.schedule.findIndex(act => act.id === body.afterActivityId);
+    if (targetIndex === -1) throw new Error("Target activity not found.");
+
+    const newSchedule = [...settings.schedule];
+    newSchedule.splice(targetIndex + 1, 0, newActivity);
+
+    return { ...settings, schedule: newSchedule };
+  },
+  remove_activity: (settings, body) => {
+    if (!settings) throw new Error("Cannot remove activity from uninitialized settings.");
+    if (!body.activityId) throw new Error("Activity ID to remove is missing.");
+    if (['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'].includes(body.activityId)) {
+        throw new Error("Cannot remove prayer activities.");
+    }
+    
+    const newSchedule = settings.schedule.filter(act => act.id !== body.activityId);
+    return { ...settings, schedule: newSchedule };
   },
   toggle_mode: (settings) => {
     if (!settings) throw new Error("Cannot toggle mode on uninitialized settings.");

@@ -19,10 +19,20 @@ export interface ScheduleItem {
   description: string;
   startTime: Date;
   endTime: Date;
+  isPrayer: boolean;
+  activityId?: string;
 }
 
 export type MealMode = "bulking" | "maintenance" | "cutting";
 export type AppMode = "strict" | "downtime";
+export type ActivityType = "filler" | "action";
+
+export interface CustomActivity {
+  id: string;
+  name: string;
+  type: ActivityType;
+  duration?: number; // In minutes, for 'action' type
+}
 
 export interface DowntimeState {
   lastNotifiedActivity: string;
@@ -44,11 +54,5 @@ export interface UserSettings {
   mealMode: MealMode;
   lastNotifiedActivity: string;
   downtime: Partial<DowntimeState>;
-}
-
-export interface DowntimeActivity {
-  name: string;
-  description: string;
-  duration: number;
-  type: "grip" | "quran" | "leetcode";
+  schedule: CustomActivity[];
 } 
