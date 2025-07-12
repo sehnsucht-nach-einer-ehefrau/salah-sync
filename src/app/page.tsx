@@ -6,6 +6,7 @@ import { LocationPrompt } from "@/components/LocationPrompt";
 import { LoadingState } from "@/components/LoadingState";
 import { ScheduleView } from "@/components/ScheduleView";
 import { calculateSchedule } from "@/lib/schedule-logic";
+import { MealEntryDialog } from "@/components/MealEntryDialog";
 
 interface ViewState {
   settings: UserSettings | null;
@@ -15,6 +16,9 @@ interface ViewState {
   timeUntilNext: string;
   loading: boolean;
   error: string | null;
+  isMealDialogOpen: boolean;
+  selectedMealType: MealMode | null;
+  isScheduleVisible: boolean;
 }
 
 export default function SalahSync() {
@@ -26,6 +30,9 @@ export default function SalahSync() {
     timeUntilNext: "",
     loading: true,
     error: null,
+    isMealDialogOpen: false,
+    selectedMealType: null,
+    isScheduleVisible: false,
   });
 
   const handleError = (message: string, error?: unknown) => {
@@ -70,7 +77,6 @@ export default function SalahSync() {
       const response = await fetch('/api/settings');
       if (!response.ok) {
         if (response.status === 404) {
-          // No settings yet, prompt for location.
           setViewState(prev => ({ ...prev, loading: false, settings: null })); 
         } else {
           throw new Error(`Server error: ${response.statusText}`);
@@ -79,42 +85,63 @@ export default function SalahSync() {
       }
   
       const settings: UserSettings = await response.json();
+
+      // === DOWNTIME MODE LOGIC ===
+      if (settings.mode === 'downtime') {
+        const downtimeState = settings.downtime || {};
+        const activityName = downtimeState.currentActivity || "Starting...";
+        const startTime = downtimeState.activityStartTime ? new Date(downtimeState.activityStartTime) : new Date();
+        const duration = activityName === "Grip Strength Training" ? 1 : 30;
+        const endTime = new Date(startTime.getTime() + duration * 60000);
+
+        const downtimeActivity: ScheduleItem = {
+          name: activityName,
+          description: downtimeState.lastNotifiedActivity || "Downtime activity in progress.",
+          startTime: startTime,
+          endTime: endTime,
+          isPrayer: false,
+        };
+
+        const staticDowntimeSchedule: ScheduleItem[] = [
+          { name: "Quran Reading", description: "30-minute session", startTime: new Date(), endTime: new Date(), isPrayer: false },
+          { name: "LeetCode Session", description: "30-minute session", startTime: new Date(), endTime: new Date(), isPrayer: false },
+          { name: "Grip Strength Training", description: "1-minute set every 5 minutes", startTime: new Date(), endTime: new Date(), isPrayer: false },
+        ];
+        
+        setViewState({
+          settings,
+          schedule: staticDowntimeSchedule,
+          currentActivity: downtimeActivity,
+          nextActivity: { name: "Next Session", description: "Another session will follow.", startTime: endTime, endTime: endTime, isPrayer: false },
+          timeUntilNext: formatTimeUntil(endTime),
+          loading: false,
+          error: null,
+          isMealDialogOpen: false,
+          selectedMealType: null,
+          isScheduleVisible: false,
+        });
+        return;
+      }
+      
+      // === STRICT MODE LOGIC ===
       const scheduleData = await fetchFullSchedule(settings);
 
       if (!scheduleData) {
-        // If schedule calculation fails, we can still show basic info
-        setViewState(prev => ({ ...prev, settings, loading: false }));
+        setViewState(prev => ({ ...prev, settings, loading: false, error: "Could not retrieve the prayer schedule. The external API may be down." }));
         return;
-      }
-
-      // Determine current activity based on mode
-      let currentActivity = scheduleData.current;
-      if (settings.mode === 'downtime' && settings.downtime) {
-        const { currentActivity: downtimeActivityName, activityStartTime } = settings.downtime;
-        
-        if (downtimeActivityName && activityStartTime) {
-          const duration = downtimeActivityName === "Grip Strength Training" ? 1 : 30;
-          const endTime = new Date(activityStartTime);
-          endTime.setMinutes(endTime.getMinutes() + duration);
-
-          currentActivity = {
-            name: downtimeActivityName,
-            description: settings.downtime.lastNotifiedActivity || "Downtime activity in progress.",
-            startTime: new Date(activityStartTime),
-            endTime: endTime,
-            isPrayer: false,
-          };
-        }
       }
       
       setViewState({
         settings,
         schedule: scheduleData.schedule,
-        currentActivity,
+        currentActivity: scheduleData.current,
         nextActivity: scheduleData.next,
         timeUntilNext: formatTimeUntil(scheduleData.next.startTime),
         loading: false,
         error: null,
+        isMealDialogOpen: false,
+        selectedMealType: null,
+        isScheduleVisible: false,
       });
   
     } catch (e) {
@@ -167,14 +194,53 @@ export default function SalahSync() {
   };
 
   const toggleDowntimeMode = () => updateServer({ action: "toggle_mode" });
-  const handleSetMealMode = (mode: MealMode) => updateServer({ action: 'set_meal_mode', mode });
-  const handleSetGripEnabled = (isEnabled: boolean) => updateServer({ action: 'toggle_grip_enabled', isEnabled });
 
-  const handleAddActivity = (activity: Omit<CustomActivity, 'id'>, afterActivityId: string) => {
-    updateServer({ action: 'add_activity', activity, afterActivityId });
+  const handleLogMeal = async (description: string) => {
+    if (!viewState.selectedMealType) return;
+    await updateServer({
+      action: 'add_meal_log',
+      meal: {
+        mealType: viewState.selectedMealType,
+        description,
+      },
+    });
   };
-  const handleRemoveActivity = (activityId: string) => {
-    updateServer({ action: 'remove_activity', activityId });
+
+  const handleAddActivity = async (activity: Omit<CustomActivity, 'id'>, afterActivityId: string) => {
+    if (!viewState.settings || !viewState.schedule) return;
+
+    const newActivity: CustomActivity = { ...activity, id: `temp-${Date.now()}` }; // Temporary ID for UI
+    const targetIndex = viewState.settings.schedule.findIndex(act => act.id === afterActivityId);
+    if (targetIndex === -1) return;
+
+    const newSchedule = [...viewState.settings.schedule];
+    newSchedule.splice(targetIndex + 1, 0, newActivity);
+    
+    const previousState = viewState;
+    setViewState(prev => ({ ...prev, settings: { ...prev.settings!, schedule: newSchedule } }));
+
+    try {
+      await updateServer({ action: 'add_activity', activity, afterActivityId });
+    } catch (e) {
+      setViewState(previousState); // Revert on error
+      handleError("Failed to add activity.", e);
+    }
+  };
+
+  const handleRemoveActivity = async (activityId: string) => {
+    if (!viewState.settings || !viewState.schedule) return;
+
+    const newSchedule = viewState.settings.schedule.filter(act => act.id !== activityId);
+    
+    const previousState = viewState;
+    setViewState(prev => ({ ...prev, settings: { ...prev.settings!, schedule: newSchedule } }));
+    
+    try {
+      await updateServer({ action: 'remove_activity', activityId });
+    } catch (e) {
+      setViewState(previousState); // Revert on error
+      handleError("Failed to remove activity.", e);
+    }
   };
 
   const requestLocation = async () => {
@@ -201,7 +267,7 @@ export default function SalahSync() {
   };
   
   const resetLocation = async () => {
-    setViewState({ loading: true, error: null, settings: null, schedule: null, currentActivity: null, nextActivity: null, timeUntilNext: '' });
+    setViewState({ loading: true, error: null, settings: null, schedule: null, currentActivity: null, nextActivity: null, timeUntilNext: '', isMealDialogOpen: false, selectedMealType: null, isScheduleVisible: false });
     // We can also ask the server to delete the settings
     await fetch("/api/settings", { method: "DELETE" }); // Implement DELETE on the server
     window.location.reload();
@@ -219,24 +285,61 @@ export default function SalahSync() {
 
   if (viewState.loading && !viewState.settings) return <LoadingState />;
   if (!viewState.settings) return <LocationPrompt requestLocation={requestLocation} error={viewState.error || ""} />;
+  
+  // If there's an error, show it, but still provide access to core functions if settings are available
+  if (viewState.error && !viewState.schedule) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full">
+        <h2 className="text-2xl font-bold mb-4">Error: {viewState.error}</h2>
+        <p className="text-lg mb-4">Please try again later or reset your location.</p>
+        <button onClick={resetLocation} className="p-2 bg-red-500 text-white rounded-md">
+          Reset Location
+        </button>
+      </div>
+    );
+  }
+
   if (!viewState.currentActivity) return <LoadingState message="Calculating Schedule..." description="Building your optimized daily routine..." />;
 
-  return (
-    <ScheduleView
-      downtimeMode={viewState.settings.mode === 'downtime'}
-      gripStrengthEnabled={viewState.settings.downtime?.gripStrengthEnabled ?? true}
-      handleSetGripEnabled={handleSetGripEnabled}
-      currentActivity={viewState.currentActivity}
-      nextActivity={viewState.nextActivity?.name || "..."}
-      timeUntilNext={viewState.timeUntilNext}
-      mealMode={viewState.settings.mealMode}
-      handleSetMealMode={handleSetMealMode}
-      resetLocation={resetLocation}
-      toggleDowntimeMode={toggleDowntimeMode}
-      schedule={viewState.schedule || []}
-      city={viewState.settings.city || "Unknown"}
-      onAddActivity={handleAddActivity}
-      onRemoveActivity={handleRemoveActivity}
-    />
-  );
+  // A new main view component to hold the main card and the schedule button
+  const MainView = () => {
+    if (!viewState.settings || !viewState.currentActivity) {
+      return <LoadingState message="Finalizing view..." />;
+    }
+
+    return (
+      <div className="relative w-full h-full">
+        {/* This is a placeholder for the main content card. ScheduleView will be adapted or replaced */}
+        <div className="p-4">
+          {/* Main Content Card Here, for now just a button to toggle schedule */}
+          <button 
+            onClick={() => setViewState(prev => ({ ...prev, isScheduleVisible: !prev.isScheduleVisible }))}
+            className="p-2 bg-blue-500 text-white rounded-md"
+          >
+            {viewState.isScheduleVisible ? 'Hide' : 'Show'} Schedule
+          </button>
+        </div>
+
+        <ScheduleView
+          isVisible={viewState.isScheduleVisible}
+          downtimeMode={viewState.settings.mode === 'downtime'}
+          resetLocation={resetLocation}
+          toggleDowntimeMode={toggleDowntimeMode}
+          schedule={viewState.schedule || []}
+          city={viewState.settings.city || "Unknown"}
+          onAddActivity={handleAddActivity}
+          onRemoveActivity={handleRemoveActivity}
+        />
+
+        <MealEntryDialog
+          isOpen={viewState.isMealDialogOpen}
+          onClose={() => setViewState(prev => ({ ...prev, isMealDialogOpen: false, selectedMealType: null }))}
+          onSubmit={handleLogMeal}
+          mealType={viewState.selectedMealType}
+        />
+      </div>
+    );
+  }
+
+  return <MainView />;
 }

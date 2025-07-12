@@ -55,4 +55,12 @@ export interface UserSettings {
   lastNotifiedActivity: string;
   downtime: Partial<DowntimeState>;
   schedule: CustomActivity[];
+  mealLog?: MealLog[];
+}
+
+export interface MealLog {
+  id: string;
+  timestamp: string;
+  mealType: MealMode;
+  description: string;
 } 

@@ -44,7 +44,7 @@ export async function GET() {
 //  UPDATE SETTINGS (POST)
 // =================================================================
 
-type Action = "toggle_mode" | "set_meal_mode" | "toggle_grip_enabled" | "setup_location" | "add_activity" | "remove_activity";
+type Action = "toggle_mode" | "set_meal_mode" | "toggle_grip_enabled" | "setup_location" | "add_activity" | "remove_activity" | "add_meal_log";
 
 interface RequestBody {
   action: Action;
@@ -62,6 +62,8 @@ interface RequestBody {
   afterActivityId?: string; // ID of the activity to insert after
   // For remove_activity
   activityId?: string;
+  // For add_meal_log
+  meal?: { mealType: MealMode; description: string };
 }
 
 const actionHandlers: Record<Action, (settings: UserSettings | null, body: RequestBody) => UserSettings> = {
@@ -80,6 +82,7 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
       lastNotifiedActivity: "",
       downtime: {},
       schedule: defaultSchedule,
+      mealLog: [],
     };
   },
   add_activity: (settings, body) => {
@@ -136,6 +139,13 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
       ...settings,
       downtime: { ...downtime, gripStrengthEnabled: body.isEnabled },
     };
+  },
+  add_meal_log: (settings, body) => {
+    if (!settings) throw new Error("Cannot add meal log to uninitialized settings.");
+    if (!body.meal) throw new Error("Meal data is missing.");
+    const newLog = { ...body.meal, id: randomUUID(), timestamp: new Date().toISOString() };
+    const mealLog = [ ...(settings.mealLog || []), newLog ];
+    return { ...settings, mealLog };
   },
 };
 

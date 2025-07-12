@@ -83,9 +83,25 @@ export function calculateSchedule(
       const blockEndTime = endAnchor.startTime;
       const totalBlockMinutes = (blockEndTime.getTime() - blockStartTime.getTime()) / 60000;
 
+      // If there are no activities, create a single "Free Time" block.
+      if (activitiesInBlock.length === 0 && totalBlockMinutes > 1) {
+        timeline.push({
+          name: "Free Time",
+          description: "Add an activity here!",
+          startTime: blockStartTime,
+          endTime: blockEndTime,
+          isPrayer: false,
+          activityId: `free-${startAnchor.activityId}`,
+        });
+        continue; // Move to the next prayer block
+      }
+
       const actionMinutes = activitiesInBlock.filter(a => a.type === 'action').reduce((sum, a) => sum + (a.duration || 0), 0);
       const fillerCount = activitiesInBlock.filter(a => a.type === 'filler').length;
-      const fillerMinutes = (totalBlockMinutes - actionMinutes) / (fillerCount || 1);
+      
+      // Prevent division by zero if there are actions but no fillers.
+      const availableMinutesForFillers = totalBlockMinutes - actionMinutes;
+      const fillerMinutes = fillerCount > 0 ? availableMinutesForFillers / fillerCount : 0;
 
       let currentTime = blockStartTime;
       activitiesInBlock.forEach(activity => {
@@ -105,7 +121,7 @@ export function calculateSchedule(
 
   const sortedSchedule = timeline.filter(item => item.endTime > item.startTime).sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
-  const currentIndex = sortedSchedule.findIndex(item => now >= item.startTime && now < item.endTime);
+  let currentIndex = sortedSchedule.findIndex(item => now >= item.startTime && now < item.endTime);
 
   if (currentIndex === -1) {
     const nextActivityIndex = sortedSchedule.findIndex(item => item.startTime > now);
@@ -113,8 +129,15 @@ export function calculateSchedule(
       const prev = sortedSchedule[nextActivityIndex - 1];
       return { schedule: sortedSchedule, current: { name: "Transition", description: `Preparing for ${sortedSchedule[nextActivityIndex].name}`, startTime: prev.endTime, endTime: sortedSchedule[nextActivityIndex].startTime, isPrayer: false }, next: sortedSchedule[nextActivityIndex] };
     }
-    const fallback = { name: "Error", description: "Could not determine current activity.", startTime: now, endTime: now, isPrayer: false };
-    return { schedule: sortedSchedule, current: fallback, next: sortedSchedule[0] || fallback };
+    // If we are still without a current activity, it's likely because we are in a "Free Time" block that hasn't been explicitly found.
+    // Let's find the Free Time block manually.
+    const freeTimeIndex = sortedSchedule.findIndex(item => item.name === 'Free Time' && now >= item.startTime && now < item.endTime);
+    if (freeTimeIndex !== -1) {
+        currentIndex = freeTimeIndex;
+    } else {
+        const fallback = { name: "Ready", description: "All activities complete for now.", startTime: now, endTime: now, isPrayer: false };
+        return { schedule: sortedSchedule, current: fallback, next: sortedSchedule[0] || fallback };
+    }
   }
 
   const current = sortedSchedule[currentIndex];
