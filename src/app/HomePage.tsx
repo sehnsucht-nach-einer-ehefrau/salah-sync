@@ -375,7 +375,10 @@ export default function HomePage() {
       <div className="text-center text-red-500">
         <h1 className="text-2xl font-bold">An Error Occurred</h1>
         <p>{viewState.error}</p>
-        <Button onClick={() => syncWithServer()} className="mt-4">Try Again</Button>
+        <div className="flex gap-4 justify-center mt-4">
+          <Button onClick={() => syncWithServer()}>Try Again</Button>
+          <Button variant="destructive" onClick={handleReset}>Reset Settings</Button>
+        </div>
       </div>
     </main>
   );
@@ -417,12 +420,6 @@ export default function HomePage() {
             </motion.div>
           )}
         </AnimatePresence>
-
-        <div className="mt-8 flex justify-center">
-          <Button variant="destructive" size="sm" onClick={handleReset}>
-            Reset All Settings
-          </Button>
-        </div>
         <div className={`flex items-center justify-center text-md gap-4 mt-4 transition-colors ${viewState.settings.mode === 'downtime' ? "text-gray-400" : "text-gray-500"}`}>
             <button onClick={resetLocation} className="flex items-center hover:opacity-70 transition-opacity"><MapPin className="h-4 w-4 mr-1 flex-shrink-0" /><span className="truncate">{viewState.settings.city || "Unknown"}</span></button>
             <span>•</span>
