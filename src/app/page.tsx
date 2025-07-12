@@ -219,6 +219,7 @@ export default function SalahSync() {
       resetLocation={resetLocation}
       toggleDowntimeMode={toggleDowntimeMode}
       schedule={viewState.schedule || []}
+      city={viewState.settings.city || "Unknown"}
     />
   );
 }
