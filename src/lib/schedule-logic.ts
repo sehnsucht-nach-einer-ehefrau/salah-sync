@@ -197,17 +197,27 @@ export function calculateSchedule(
   const sortedTimeline = timeline.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
   const freeSlots: { start: Date, end: Date, duration: number }[] = [];
 
-  for (let i = 0; i < sortedTimeline.length - 1; i++) {
-    const currentItem = sortedTimeline[i];
-    const nextItem = sortedTimeline[i+1];
+  // 4. Calculate end times
+  const finalSchedule = sortedTimeline.map((item, index) => {
+    if (item.endTime) return item; // Downtime items have pre-calculated end times
+
+    const nextItem = sortedTimeline[index + 1];
+    // If this is the last item of the day, its end time is the next day's Fajr
+    item.endTime = nextItem ? nextItem.startTime : prayerDateTimes.NextFajr;
+    return item;
+  });
+
+  for (let i = 0; i < finalSchedule.length - 1; i++) {
+    const currentItem = finalSchedule[i];
+    const nextItem = finalSchedule[i+1];
     const gap = nextItem.startTime.getTime() - currentItem.endTime.getTime();
     if (gap > 0) {
       freeSlots.push({ start: currentItem.endTime, end: nextItem.startTime, duration: gap / 60000 });
     }
   }
   // Also check gap between the last item and the start of the sleep block.
-  const lastItem = sortedTimeline[sortedTimeline.length - 1];
-  const sleepItem = sortedTimeline.find(item => item.id === 'sleep');
+  const lastItem = finalSchedule[finalSchedule.length - 1];
+  const sleepItem = finalSchedule.find(item => item.id === 'sleep');
   if (sleepItem && lastItem.endTime < sleepItem.startTime) {
     const gap = sleepItem.startTime.getTime() - lastItem.endTime.getTime();
     if (gap > 0) {

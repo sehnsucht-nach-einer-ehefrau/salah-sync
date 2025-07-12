@@ -133,6 +133,14 @@ export function ScheduleView({
             if (isUneditable(oldItem)) return;
 
             const reorderedSchedule = arrayMove(schedule, oldIndex, newIndex);
+
+            // Prevent dropping a custom item between two non-custom items.
+            const prevItem = newIndex > 0 ? reorderedSchedule[newIndex - 1] : null;
+            const nextItem = newIndex < reorderedSchedule.length - 1 ? reorderedSchedule[newIndex + 1] : null;
+            if (prevItem && nextItem && !prevItem.isCustom && !nextItem.isCustom) {
+                // This move is invalid, so we don't proceed.
+                return;
+            }
             
             // Get the IDs of the reordered custom (non-prayer) activities.
             const reorderedIds = reorderedSchedule
