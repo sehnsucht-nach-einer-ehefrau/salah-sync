@@ -218,11 +218,18 @@ export default function HomePage() {
   
   const handleLocalAddActivity = (activity: Omit<CustomActivity, 'id'>, afterActivityId: string) => {
     if (!viewState.settings) return;
+
+    // If adding after a "Free Time" block, get the ID of the real activity that came before it.
+    let realAfterActivityId = afterActivityId;
+    if (afterActivityId.startsWith('free-')) {
+      realAfterActivityId = afterActivityId.substring(5);
+    }
+    
     const newActivity: CustomActivity = { ...activity, id: `custom-${Date.now()}` };
     
-    const targetIndex = viewState.settings.schedule.findIndex(act => act.id === afterActivityId);
+    const targetIndex = viewState.settings.schedule.findIndex(act => act.id === realAfterActivityId);
     if (targetIndex === -1) {
-      console.error("Could not find activity to add after:", afterActivityId);
+      console.error("Could not find activity to add after:", realAfterActivityId);
       return;
     }
 
