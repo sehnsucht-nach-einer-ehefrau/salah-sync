@@ -5,6 +5,14 @@ import { type NextRequest, NextResponse } from "next/server";
 import { UserSettings, MealMode, CustomActivity } from "@/lib/types";
 import { randomUUID } from "crypto";
 
+const defaultSchedule: CustomActivity[] = [
+  { id: 'fajr', name: 'Fajr', type: 'action', duration: 15 },
+  { id: 'dhuhr', name: 'Dhuhr', type: 'action', duration: 15 },
+  { id: 'asr', name: 'Asr', type: 'action', duration: 15 },
+  { id: 'maghrib', name: 'Maghrib', type: 'action', duration: 15 },
+  { id: 'isha', name: 'Isha', type: 'action', duration: 15 },
+];
+
 // =================================================================
 //  GET SETTINGS
 // =================================================================
@@ -12,10 +20,18 @@ import { randomUUID } from "crypto";
 export async function GET() {
   const userKey = "user_settings";
   try {
-    const settings = await kv.get<UserSettings>(userKey);
+    let settings = await kv.get<UserSettings>(userKey);
     if (!settings) {
       return NextResponse.json({ error: "Settings not found. Please set location first." }, { status: 404 });
     }
+
+    // Data migration: If settings from an old version are missing the schedule, add the default one.
+    if (!settings.schedule || !Array.isArray(settings.schedule) || settings.schedule.length === 0) {
+      settings.schedule = defaultSchedule;
+      // Persist the migrated settings back to KV. No need to `await` this.
+      kv.set(userKey, settings).catch(console.error);
+    }
+
     return NextResponse.json(settings);
   } catch (error: unknown) {
     console.error("Failed to retrieve settings from KV:", error);
@@ -63,13 +79,7 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
       mealMode: 'maintenance',
       lastNotifiedActivity: "",
       downtime: {},
-      schedule: [
-        { id: 'fajr', name: 'Fajr', type: 'action', duration: 15 },
-        { id: 'dhuhr', name: 'Dhuhr', type: 'action', duration: 15 },
-        { id: 'asr', name: 'Asr', type: 'action', duration: 15 },
-        { id: 'maghrib', name: 'Maghrib', type: 'action', duration: 15 },
-        { id: 'isha', name: 'Isha', type: 'action', duration: 15 },
-      ],
+      schedule: defaultSchedule,
     };
   },
   add_activity: (settings, body) => {
