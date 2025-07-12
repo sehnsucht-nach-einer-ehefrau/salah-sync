@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Hand, Utensils, Weight, ChevronsDown, Clock, List } from "lucide-react";
-import { Popover, PopoverContent } from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScheduleItem, MealMode } from "@/lib/types";
@@ -67,8 +67,7 @@ export function MainCard({
   handleLogMeal,
   toggleSchedule,
 }: MainCardProps) {
-  const [selectedMealType, setSelectedMealType] = useState<MealMode | null>(null);
-  const [isMealPopoverOpen, setMealPopoverOpen] = useState(false);
+
   
   const mealButtons: {type: MealMode, icon: React.ReactNode}[] = [
     { type: 'cutting', icon: <ChevronsDown size={18}/> },
@@ -93,49 +92,39 @@ export function MainCard({
             </div>
             <div className="absolute top-3 right-3 flex gap-1">
               
-              {!downtimeMode && mealButtons.map(({ type, icon }) => (
-                <Popover
-                  key={type}
-                  open={isMealPopoverOpen && selectedMealType === type}
-                  onOpenChange={(open) => {
-                    setMealPopoverOpen(open);
-                    if (!open) {
-                      setSelectedMealType(null); // Reset selection when popover closes
-                    }
-                  }}
-                >
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        onClick={() => {
-                          // If clicking the already active meal mode, toggle the popover
-                          if (mealMode === type) {
-                            setSelectedMealType(type);
-                            setMealPopoverOpen(!isMealPopoverOpen);
-                          } else {
-                            // If clicking a new meal mode, set it and close any open popover
-                            handleSetMealMode(type);
-                            setMealPopoverOpen(false);
-                            setSelectedMealType(null);
-                          }
-                        }}
-                        variant="ghost"
-                        size="icon"
-                        className={`h-8 w-8 rounded-full ${mealMode === type ? 'bg-gray-200 text-black' : 'text-gray-500 hover:bg-gray-100'}`}
-                      >
-                        {icon}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent><p>{type.charAt(0).toUpperCase() + type.slice(1)}</p></TooltipContent>
-                  </Tooltip>
-                  <PopoverContent className="w-80">
-                    <MealEntryForm mealType={type} onLogMeal={(desc) => {
-                        handleLogMeal(type, desc);
-                        setMealPopoverOpen(false); // Close popover on submission
-                      }} />
-                  </PopoverContent>
-                </Popover>
-              ))}
+              {!downtimeMode && mealButtons.map(({ type, icon }) => {
+                const isSelected = mealMode === type;
+                return (
+                  <Popover key={type}>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <PopoverTrigger asChild disabled={!isSelected}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className={`h-8 w-8 rounded-full ${isSelected ? 'bg-gray-200 text-black' : 'text-gray-500 hover:bg-gray-100'}`}
+                              onClick={() => {
+                                if (!isSelected) {
+                                  handleSetMealMode(type);
+                                }
+                              }}
+                            >
+                              {icon}
+                            </Button>
+                          </PopoverTrigger>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{type.charAt(0).toUpperCase() + type.slice(1)}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <PopoverContent className="w-80">
+                      <MealEntryForm mealType={type} onLogMeal={(desc) => handleLogMeal(type, desc)} />
+                    </PopoverContent>
+                  </Popover>
+                );
+              })}
               {downtimeMode && (
                 <Tooltip>
                   <TooltipTrigger asChild><Button onClick={() => handleSetGripEnabled(!gripStrengthEnabled)} variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-white/10"><Hand className={`h-5 w-5 transition-colors ${gripStrengthEnabled ? "text-white" : "text-gray-600"}`} /></Button></TooltipTrigger>

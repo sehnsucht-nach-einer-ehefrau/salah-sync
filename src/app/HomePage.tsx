@@ -280,7 +280,7 @@ export default function HomePage() {
     }, 1000); // Run every second
 
     return () => clearInterval(downtimeTimer);
-  }, [viewState.settings, viewState.currentActivity, updateServer]);
+  }, [viewState, updateServer]);
 
 
   const requestLocation = async () => {

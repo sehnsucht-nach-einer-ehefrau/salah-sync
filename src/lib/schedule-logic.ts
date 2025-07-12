@@ -1,7 +1,7 @@
 // src/lib/schedule-logic.ts
 
 import { toZonedTime } from "date-fns-tz";
-import { PrayerTimes, ScheduleItem, UserSettings, CustomActivity } from "./types";
+import { PrayerTimes, ScheduleItem, UserSettings } from "./types";
 
 export const addMinutes = (date: Date, minutes: number): Date => new Date(date.getTime() + minutes * 60000);
 
@@ -30,12 +30,12 @@ export function calculateSchedule(
   settings: UserSettings,
   prayerTimes: PrayerTimes,
 ): { schedule: ScheduleItem[], current: ScheduleItem; next: ScheduleItem } {
-  const { timezone, schedule: userSchedule } = settings;
+  const { timezone, schedule: userSchedule = [] } = settings;
   const now = toZonedTime(new Date(), timezone);
   const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
   const tomorrow = addMinutes(today, 24 * 60);
 
-  // Get prayer times for today and tomorrow to handle overnight schedules
   const prayerDateTimes = {
     Fajr: parseTime(prayerTimes.Fajr, timezone, today),
     Dhuhr: parseTime(prayerTimes.Dhuhr, timezone, today),
@@ -46,104 +46,199 @@ export function calculateSchedule(
   };
 
   const timeline: ScheduleItem[] = [];
-  const prayerMap = new Map<string, ScheduleItem>();
 
-  // 1. First, create and map all prayer items
-  userSchedule.filter(act => ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'].includes(act.id)).forEach(prayerActivity => {
-      const prayerKey = prayerActivity.name as keyof typeof prayerDateTimes;
-      const prayerItem = createPrayerScheduleItem(prayerActivity.name, prayerDateTimes[prayerKey], prayerActivity.duration || 15);
-      prayerMap.set(prayerActivity.id, prayerItem);
+  // 1. Add prayer times to the timeline
+  const prayerActivities = userSchedule.filter(act => ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'].includes(act.id));
+  prayerActivities.forEach(p => {
+    const prayerKey = p.name as keyof typeof prayerDateTimes;
+    timeline.push(createPrayerScheduleItem(p.name, prayerDateTimes[prayerKey], p.duration || 15));
   });
-  // Add next Fajr for accurate overnight calculation
-  prayerMap.set('nextfajr', createPrayerScheduleItem("Next Fajr", prayerDateTimes.NextFajr, 15));
 
+  const fajr = timeline.find(p => p.id === 'fajr')!;
+  const dhuhr = timeline.find(p => p.id === 'dhuhr')!;
+  const maghrib = timeline.find(p => p.id === 'maghrib')!;
+  const isha = timeline.find(p => p.id === 'isha')!;
+  const nextFajr = createPrayerScheduleItem("Next Fajr", prayerDateTimes.NextFajr, 15);
 
-  // 2. Iterate through the user's schedule to place activities between prayers
-  for (let i = 0; i < userSchedule.length; i++) {
-      const currentActivityConfig = userSchedule[i];
-      const nextActivityConfig = userSchedule[(i + 1) % userSchedule.length];
-      
-      const isCurrentPrayer = prayerMap.has(currentActivityConfig.id);
-      if (!isCurrentPrayer) continue; // Should not happen if logic is sound, but good practice
+  // 2. Calculate and add Sleep and Tahajjud
+  const sleepWindowStart = isha.endTime;
+  const sleepWindowEnd = addMinutes(nextFajr.startTime, -10); // End 10 mins before next Fajr
+  const totalSleepWindowMinutes = (sleepWindowEnd.getTime() - sleepWindowStart.getTime()) / 60000;
+  
+  const IDEAL_SLEEP_MINS = 9 * 60;
+  let tahajjudDuration = 0;
+  let sleepDuration = totalSleepWindowMinutes;
+  let sleepDeficit = IDEAL_SLEEP_MINS - sleepDuration;
 
-      const startAnchor = prayerMap.get(currentActivityConfig.id)!;
-      const endAnchor = prayerMap.get(nextActivityConfig.id) || prayerMap.get('nextfajr')!;
-
-      timeline.push(startAnchor);
-
-      // Get all user activities between these two prayer anchors
-      const activitiesInBlock: CustomActivity[] = [];
-      let nextIndex = (userSchedule.indexOf(currentActivityConfig) + 1);
-      while (userSchedule[nextIndex % userSchedule.length].id !== nextActivityConfig.id) {
-          activitiesInBlock.push(userSchedule[nextIndex % userSchedule.length]);
-          nextIndex++;
-      }
-      
-      const blockStartTime = startAnchor.endTime;
-      const blockEndTime = endAnchor.startTime;
-      const totalBlockMinutes = (blockEndTime.getTime() - blockStartTime.getTime()) / 60000;
-
-      // If there are no activities, create a single "Free Time" block.
-      if (activitiesInBlock.length === 0 && totalBlockMinutes > 1) {
-        timeline.push({
-          name: "Free Time",
-          description: "Add an activity here!",
-          startTime: blockStartTime,
-          endTime: blockEndTime,
-          isPrayer: false,
-          id: `free-${startAnchor.id}`,
-        });
-        continue; // Move to the next prayer block
-      }
-
-      const actionMinutes = activitiesInBlock.filter(a => a.type === 'action').reduce((sum, a) => sum + (a.duration || 0), 0);
-      const fillerCount = activitiesInBlock.filter(a => a.type === 'filler').length;
-      
-      // Prevent division by zero if there are actions but no fillers.
-      const availableMinutesForFillers = totalBlockMinutes - actionMinutes;
-      const fillerMinutes = fillerCount > 0 ? availableMinutesForFillers / fillerCount : 0;
-
-      let currentTime = blockStartTime;
-      activitiesInBlock.forEach(activity => {
-          const duration = activity.type === 'action' ? (activity.duration || 0) : fillerMinutes;
-          const endTime = addMinutes(currentTime, duration);
-          timeline.push({
-              name: activity.name,
-              description: `${activity.type} activity`,
-              startTime: new Date(currentTime),
-              endTime: endTime,
-              isPrayer: false,
-              id: activity.id,
-              type: activity.type,
-              duration: activity.duration,
-          });
-          currentTime = endTime;
-      });
+  if (totalSleepWindowMinutes >= IDEAL_SLEEP_MINS) {
+    const availableForTahajjud = totalSleepWindowMinutes - IDEAL_SLEEP_MINS;
+    if (availableForTahajjud >= 30) tahajjudDuration = 30;
+    else if (availableForTahajjud >= 20) tahajjudDuration = 20;
+    else if (availableForTahajjud >= 10) tahajjudDuration = 10;
+    else if (availableForTahajjud >= 5) tahajjudDuration = 5;
+    
+    sleepDuration = IDEAL_SLEEP_MINS;
+    sleepDeficit = 0;
   }
 
-  const sortedSchedule = timeline.filter(item => item.endTime > item.startTime).sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+  const tahajjudStartTime = addMinutes(sleepWindowStart, totalSleepWindowMinutes - sleepDuration - tahajjudDuration);
+  if (tahajjudDuration > 0) {
+    timeline.push({
+      id: 'tahajjud',
+      name: 'Tahajjud',
+      description: `${tahajjudDuration} minutes of night prayer`,
+      startTime: tahajjudStartTime,
+      endTime: addMinutes(tahajjudStartTime, tahajjudDuration),
+      isPrayer: true,
+    });
+  }
+
+  const sleepStartTime = addMinutes(tahajjudStartTime, tahajjudDuration);
+  timeline.push({
+    id: 'sleep',
+    name: 'Sleep',
+    description: 'Uninterrupted rest',
+    startTime: sleepStartTime,
+    endTime: addMinutes(sleepStartTime, sleepDuration),
+    isPrayer: false, // Not a prayer, but a core activity
+  });
+
+  // 3. Add Meals and Nap
+  const breakfast = {
+    id: 'breakfast',
+    name: 'Breakfast',
+    description: 'First meal of the day',
+    startTime: fajr.endTime,
+    endTime: addMinutes(fajr.endTime, 30),
+    isPrayer: false,
+  };
+  timeline.push(breakfast);
+
+  let postDhuhrActivityStart = dhuhr.endTime;
+  if (sleepDeficit > 0) {
+    const nap = {
+      id: 'nap',
+      name: 'Nap',
+      description: `Catching up on ${Math.round(sleepDeficit)} minutes of sleep`,
+      startTime: dhuhr.endTime,
+      endTime: addMinutes(dhuhr.endTime, sleepDeficit),
+      isPrayer: false,
+    };
+    timeline.push(nap);
+    postDhuhrActivityStart = nap.endTime;
+  }
+
+  const lunch = {
+    id: 'lunch',
+    name: 'Lunch',
+    description: 'Mid-day meal',
+    startTime: postDhuhrActivityStart,
+    endTime: addMinutes(postDhuhrActivityStart, 30),
+    isPrayer: false,
+  };
+  timeline.push(lunch);
+
+  const dinner = {
+    id: 'dinner',
+    name: 'Dinner',
+    description: 'Final meal of the day',
+    startTime: addMinutes(maghrib.startTime, -30),
+    endTime: maghrib.startTime,
+    isPrayer: false,
+  };
+  timeline.push(dinner);
+
+  // 4. Find free time slots and distribute user-defined activities
+  const sortedTimeline = timeline.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+  const freeSlots: { start: Date, end: Date, duration: number }[] = [];
+
+  for (let i = 0; i < sortedTimeline.length - 1; i++) {
+    const currentItem = sortedTimeline[i];
+    const nextItem = sortedTimeline[i+1];
+    const gap = nextItem.startTime.getTime() - currentItem.endTime.getTime();
+    if (gap > 0) {
+      freeSlots.push({ start: currentItem.endTime, end: nextItem.startTime, duration: gap / 60000 });
+    }
+  }
+  // Also check gap between the last item and the start of the sleep block.
+  const lastItem = sortedTimeline[sortedTimeline.length - 1];
+  const sleepItem = sortedTimeline.find(item => item.id === 'sleep');
+  if (sleepItem && lastItem.endTime < sleepItem.startTime) {
+    const gap = sleepItem.startTime.getTime() - lastItem.endTime.getTime();
+    if (gap > 0) {
+      freeSlots.push({ start: lastItem.endTime, end: sleepItem.startTime, duration: gap / 60000 });
+    }
+  }
+
+  const userActivities = userSchedule.filter(act => !['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'].includes(act.id));
+  const actionActivities = userActivities.filter(a => a.type === 'action');
+  const fillerActivities = userActivities.filter(a => a.type === 'filler');
+
+  const totalActionMinutes = actionActivities.reduce((sum, a) => sum + (a.duration || 0), 0);
+  const totalFreeMinutes = freeSlots.reduce((sum, s) => sum + s.duration, 0);
+  const availableMinutesForFillers = totalFreeMinutes - totalActionMinutes;
+  const fillerMinutes = fillerActivities.length > 0 ? availableMinutesForFillers / fillerActivities.length : 0;
+
+  let activityCursor = 0;
+  freeSlots.forEach(slot => {
+    let currentTime = slot.start;
+    // A more sophisticated logic could be implemented to decide which activities go into which slot
+    // For now, we just process them in order.
+    while(activityCursor < userActivities.length) {
+      const activity = userActivities[activityCursor];
+      const duration = activity.type === 'action' ? (activity.duration || 0) : fillerMinutes;
+      const endTime = addMinutes(currentTime, duration);
+
+      if (endTime <= slot.end) {
+        timeline.push({
+          ...activity,
+          description: `${activity.name} activity`,
+          startTime: currentTime,
+          endTime: endTime,
+          isPrayer: false,
+        });
+        currentTime = endTime;
+        activityCursor++;
+      } else {
+        break; // Activity doesn't fit, move to next slot
+      }
+    }
+  });
+
+  // 5. Finalize and find current/next
+  const sortedSchedule = timeline
+    .filter(item => item.endTime > item.startTime) // Ensure valid duration
+    .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
   let currentIndex = sortedSchedule.findIndex(item => now >= item.startTime && now < item.endTime);
 
   if (currentIndex === -1) {
     const nextActivityIndex = sortedSchedule.findIndex(item => item.startTime > now);
-    if (nextActivityIndex > 0) {
-      const prev = sortedSchedule[nextActivityIndex - 1];
-      return { schedule: sortedSchedule, current: { name: "Transition", description: `Preparing for ${sortedSchedule[nextActivityIndex].name}`, startTime: prev.endTime, endTime: sortedSchedule[nextActivityIndex].startTime, isPrayer: false, id: "transition" }, next: sortedSchedule[nextActivityIndex] };
-    }
-    // If we are still without a current activity, it's likely because we are in a "Free Time" block that hasn't been explicitly found.
-    // Let's find the Free Time block manually.
-    const freeTimeIndex = sortedSchedule.findIndex(item => item.name === 'Free Time' && now >= item.startTime && now < item.endTime);
-    if (freeTimeIndex !== -1) {
-        currentIndex = freeTimeIndex;
-    } else {
-        const fallback = { name: "Ready", description: "All activities complete for now.", startTime: now, endTime: now, isPrayer: false, id: "ready" };
-        return { schedule: sortedSchedule, current: fallback, next: sortedSchedule[0] || fallback };
+    if (nextActivityIndex !== -1) {
+      const prevEndTime = nextActivityIndex > 0 ? sortedSchedule[nextActivityIndex - 1].endTime : now;
+      const currentItem = {
+        id: 'transition',
+        name: 'Free Time',
+        description: `Preparing for ${sortedSchedule[nextActivityIndex].name}`,
+        startTime: prevEndTime,
+        endTime: sortedSchedule[nextActivityIndex].startTime,
+        isPrayer: false,
+      };
+      // Only add transition if it's not overlapping
+      if (currentItem.startTime < currentItem.endTime) {
+        sortedSchedule.splice(nextActivityIndex, 0, currentItem);
+        currentIndex = nextActivityIndex;
+      }
     }
   }
+  
+  // Fallback if still not found
+  if (currentIndex === -1) {
+    currentIndex = sortedSchedule.length - 1; // Default to last known activity
+  }
 
-  const current = sortedSchedule[currentIndex];
-  const next = sortedSchedule[(currentIndex + 1) % sortedSchedule.length];
+  const current = sortedSchedule[currentIndex] || { name: "Error", description: "Could not determine current activity.", startTime: now, endTime: now, isPrayer: false, id: "error" };
+  const next = sortedSchedule[(currentIndex + 1) % sortedSchedule.length] || current;
   
   return { schedule: sortedSchedule, current, next };
 }

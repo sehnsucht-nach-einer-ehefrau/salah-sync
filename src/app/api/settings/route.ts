@@ -92,11 +92,14 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
     if (!body.activity) throw new Error("Activity data is missing.");
     if (!body.afterActivityId) throw new Error("Target activity ID is missing.");
 
+    // Ensure the schedule exists and is an array before attempting to modify it.
+    const schedule = settings.schedule || [];
+
     const newActivity: CustomActivity = { ...body.activity, id: randomUUID() };
-    const targetIndex = settings.schedule.findIndex(act => act.id === body.afterActivityId);
+    const targetIndex = schedule.findIndex(act => act.id === body.afterActivityId);
     if (targetIndex === -1) throw new Error("Target activity not found.");
 
-    const newSchedule = [...settings.schedule];
+    const newSchedule = [...schedule];
     newSchedule.splice(targetIndex + 1, 0, newActivity);
 
     return { ...settings, schedule: newSchedule };

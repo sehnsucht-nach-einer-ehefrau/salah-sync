@@ -68,6 +68,8 @@ function AddActivityForm({ afterActivityId, onAddActivity }: { afterActivityId: 
     );
 }
 
+const CORE_ACTIVITY_IDS = ['sleep', 'tahajjud', 'breakfast', 'lunch', 'dinner', 'nap', 'transition'];
+
 function SortableScheduleItem({ item, downtimeMode, onRemoveActivity, onAddActivity, formatScheduleTime }: { item: ScheduleItem, downtimeMode: boolean, onRemoveActivity: (id: string) => void, onAddActivity: ScheduleViewProps['onAddActivity'], formatScheduleTime: (date: Date) => string }) {
     const {
         attributes,
@@ -82,16 +84,19 @@ function SortableScheduleItem({ item, downtimeMode, onRemoveActivity, onAddActiv
         transition,
     };
 
+    const isEditable = !item.isPrayer && !CORE_ACTIVITY_IDS.includes(item.id);
+
     return (
         <div ref={setNodeRef} style={style}>
             <div className={`flex justify-between items-center py-3`}>
                 <div className="flex items-center gap-2">
-                    {!item.isPrayer && (
+                    {isEditable ? (
                         <button {...attributes} {...listeners} className="cursor-grab text-gray-500">
                             <GripVertical className="h-5 w-5" />
                         </button>
+                    ) : (
+                        <div className="w-7"></div> // Placeholder for alignment
                     )}
-                     {item.isPrayer && <div className="w-7"></div>}
                     <div>
                         <p className="font-semibold">{item.name}</p>
                         <p className={`text-sm ${downtimeMode ? "text-gray-400" : "text-gray-600"}`}>{item.description}</p>
@@ -99,12 +104,12 @@ function SortableScheduleItem({ item, downtimeMode, onRemoveActivity, onAddActiv
                 </div>
                 <div className="flex items-center gap-2">
                     <p className="text-right font-mono text-sm">{formatScheduleTime(item.startTime)}</p>
-                    {!item.isPrayer && (
+                    {isEditable && (
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-500" onClick={() => onRemoveActivity(item.id)}><Trash2 className="h-4 w-4" /></Button>
                     )}
                 </div>
             </div>
-            {!item.isPrayer && (
+            {isEditable && (
             <Dialog>
                 <DialogTrigger asChild>
                     <div className="flex items-center justify-center -my-2">
@@ -146,7 +151,12 @@ export function ScheduleView({
             const oldIndex = schedule.findIndex(item => item.id === active.id);
             const newIndex = schedule.findIndex(item => item.id === over.id);
             if (oldIndex === -1 || newIndex === -1) return;
-            if (schedule[oldIndex].isPrayer || schedule[newIndex].isPrayer) return;
+            const oldItem = schedule[oldIndex];
+            const newItem = schedule[newIndex];
+
+            const isUneditable = (item: ScheduleItem) => item.isPrayer || CORE_ACTIVITY_IDS.includes(item.id);
+
+            if (isUneditable(oldItem) || isUneditable(newItem)) return;
 
             const reorderedSchedule = arrayMove(schedule, oldIndex, newIndex);
             
@@ -157,7 +167,7 @@ export function ScheduleView({
         }
     };
 
-    const scheduleIds = schedule.filter(item => !item.isPrayer).map(item => item.id);
+    const scheduleIds = schedule.filter(item => !item.isPrayer && !CORE_ACTIVITY_IDS.includes(item.id)).map(item => item.id);
 
     return (
         <div className="w-full max-w-2xl mx-auto p-4">
