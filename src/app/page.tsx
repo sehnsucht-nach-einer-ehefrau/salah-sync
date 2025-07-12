@@ -7,6 +7,7 @@ import { LoadingState } from "@/components/LoadingState";
 import { ScheduleView } from "@/components/ScheduleView";
 import { calculateSchedule } from "@/lib/schedule-logic";
 import { MealEntryDialog } from "@/components/MealEntryDialog";
+import { MainCard } from "@/components/MainCard";
 
 interface ViewState {
   settings: UserSettings | null;
@@ -195,6 +196,27 @@ export default function SalahSync() {
 
   const toggleDowntimeMode = () => updateServer({ action: "toggle_mode" });
 
+  const handleSetMealMode = async (mode: MealMode) => {
+    if (!viewState.settings) return;
+
+    if (mode === viewState.settings.mealMode) {
+      setViewState(prev => ({ ...prev, isMealDialogOpen: true, selectedMealType: mode }));
+      return;
+    }
+    
+    const previousSettings = viewState.settings;
+    setViewState(prev => ({ ...prev, settings: { ...prev.settings!, mealMode: mode }}));
+
+    try {
+      await updateServer({ action: 'set_meal_mode', mode });
+    } catch (e) {
+      setViewState(prev => ({ ...prev, settings: previousSettings }));
+      handleError("Failed to set meal mode.", e);
+    }
+  };
+
+  const handleSetGripEnabled = (isEnabled: boolean) => updateServer({ action: 'toggle_grip_enabled', isEnabled });
+
   const handleLogMeal = async (description: string) => {
     if (!viewState.selectedMealType) return;
     await updateServer({
@@ -301,45 +323,41 @@ export default function SalahSync() {
 
   if (!viewState.currentActivity) return <LoadingState message="Calculating Schedule..." description="Building your optimized daily routine..." />;
 
-  // A new main view component to hold the main card and the schedule button
-  const MainView = () => {
-    if (!viewState.settings || !viewState.currentActivity) {
-      return <LoadingState message="Finalizing view..." />;
-    }
+  // This is the correct structure now.
+  return (
+    <div className="relative w-full h-full">
+      <MainCard
+        downtimeMode={viewState.settings.mode === 'downtime'}
+        gripStrengthEnabled={viewState.settings.downtime?.gripStrengthEnabled ?? true}
+        handleSetGripEnabled={handleSetGripEnabled}
+        currentActivity={viewState.currentActivity}
+        nextActivity={viewState.nextActivity?.name || "..."}
+        timeUntilNext={viewState.timeUntilNext}
+        mealMode={viewState.settings.mealMode}
+        handleSetMealMode={handleSetMealMode}
+        toggleSchedule={() => setViewState(prev => ({ ...prev, isScheduleVisible: !prev.isScheduleVisible }))}
+        resetLocation={resetLocation}
+        toggleDowntimeMode={toggleDowntimeMode}
+        city={viewState.settings.city || "Unknown"}
+      />
 
-    return (
-      <div className="relative w-full h-full">
-        {/* This is a placeholder for the main content card. ScheduleView will be adapted or replaced */}
-        <div className="p-4">
-          {/* Main Content Card Here, for now just a button to toggle schedule */}
-          <button 
-            onClick={() => setViewState(prev => ({ ...prev, isScheduleVisible: !prev.isScheduleVisible }))}
-            className="p-2 bg-blue-500 text-white rounded-md"
-          >
-            {viewState.isScheduleVisible ? 'Hide' : 'Show'} Schedule
-          </button>
-        </div>
+      <ScheduleView
+        isVisible={viewState.isScheduleVisible}
+        downtimeMode={viewState.settings.mode === 'downtime'}
+        resetLocation={resetLocation}
+        toggleDowntimeMode={toggleDowntimeMode}
+        schedule={viewState.schedule || []}
+        city={viewState.settings.city || "Unknown"}
+        onAddActivity={handleAddActivity}
+        onRemoveActivity={handleRemoveActivity}
+      />
 
-        <ScheduleView
-          isVisible={viewState.isScheduleVisible}
-          downtimeMode={viewState.settings.mode === 'downtime'}
-          resetLocation={resetLocation}
-          toggleDowntimeMode={toggleDowntimeMode}
-          schedule={viewState.schedule || []}
-          city={viewState.settings.city || "Unknown"}
-          onAddActivity={handleAddActivity}
-          onRemoveActivity={handleRemoveActivity}
-        />
-
-        <MealEntryDialog
-          isOpen={viewState.isMealDialogOpen}
-          onClose={() => setViewState(prev => ({ ...prev, isMealDialogOpen: false, selectedMealType: null }))}
-          onSubmit={handleLogMeal}
-          mealType={viewState.selectedMealType}
-        />
-      </div>
-    );
-  }
-
-  return <MainView />;
+      <MealEntryDialog
+        isOpen={viewState.isMealDialogOpen}
+        onClose={() => setViewState(prev => ({ ...prev, isMealDialogOpen: false, selectedMealType: null }))}
+        onSubmit={handleLogMeal}
+        mealType={viewState.selectedMealType}
+      />
+    </div>
+  );
 }
