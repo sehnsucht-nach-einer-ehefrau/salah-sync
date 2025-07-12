@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Hand, Utensils, Weight, ChevronsDown, Clock } from "lucide-react";
+import { Hand, Utensils, Weight, ChevronsDown, Clock, List } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -52,6 +52,7 @@ interface MainCardProps {
   mealMode: MealMode;
   handleSetMealMode: (mode: MealMode) => void;
   handleLogMeal: (mealType: MealMode, description: string) => void;
+  toggleSchedule: () => void;
 }
 
 export function MainCard({
@@ -64,6 +65,7 @@ export function MainCard({
   mealMode,
   handleSetMealMode,
   handleLogMeal,
+  toggleSchedule,
 }: MainCardProps) {
   
   const mealButtons: {type: MealMode, icon: React.ReactNode}[] = [
@@ -78,6 +80,14 @@ export function MainCard({
         <Card className={`relative p-8 sm:p-12 border mb-4 shadow-lg transition-colors duration-700 ease-in-out ${downtimeMode ? "bg-black border-gray-800 text-white" : "bg-white border-gray-200 text-black"}`}>
           <TooltipProvider delayDuration={0}>
             <div className="absolute top-3 right-3 flex gap-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button onClick={toggleSchedule} variant="ghost" size="icon" className="h-8 w-8 rounded-full text-gray-500 hover:bg-gray-100">
+                    <List size={18} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent><p>Show/Hide Schedule</p></TooltipContent>
+              </Tooltip>
               {!downtimeMode && mealButtons.map(({ type, icon }) => (
                 <Popover key={type}>
                   <Tooltip>

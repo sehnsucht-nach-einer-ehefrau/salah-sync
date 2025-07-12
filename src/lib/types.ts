@@ -20,7 +20,10 @@ export interface ScheduleItem {
   startTime: Date;
   endTime: Date;
   isPrayer: boolean;
-  activityId?: string;
+  id: string; // Renamed from activityId and made mandatory
+  // Properties from CustomActivity to make types compatible
+  type?: ActivityType;
+  duration?: number;
 }
 
 export type MealMode = "bulking" | "maintenance" | "cutting";

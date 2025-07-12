@@ -29,6 +29,9 @@ export default function HomePage() {
     loading: true,
     error: null,
   });
+  
+  // New state for local schedule management and UI toggling
+  const [showSchedule, setShowSchedule] = useState(true);
 
   const handleError = (message: string, error?: unknown) => {
     console.error(message, error);
@@ -79,12 +82,13 @@ export default function HomePage() {
         startTime: startTime,
         endTime: endTime,
         isPrayer: false,
+        id: 'downtime-current',
       };
 
       const staticDowntimeSchedule: ScheduleItem[] = [
-        { name: "Quran Reading", description: "30-minute session", startTime: new Date(), endTime: new Date(), isPrayer: false },
-        { name: "LeetCode Session", description: "30-minute session", startTime: new Date(), endTime: new Date(), isPrayer: false },
-        { name: "Grip Strength Training", description: "1-minute set every 5 minutes", startTime: new Date(), endTime: new Date(), isPrayer: false },
+        { name: "Quran Reading", description: "30-minute session", startTime: new Date(), endTime: new Date(), isPrayer: false, id: 'downtime-quran' },
+        { name: "LeetCode Session", description: "30-minute session", startTime: new Date(), endTime: new Date(), isPrayer: false, id: 'downtime-leetcode' },
+        { name: "Grip Strength Training", description: "1-minute set every 5 minutes", startTime: new Date(), endTime: new Date(), isPrayer: false, id: 'downtime-grip' },
       ];
       
       setViewState(prev => ({
@@ -92,7 +96,7 @@ export default function HomePage() {
         settings,
         schedule: staticDowntimeSchedule,
         currentActivity: downtimeActivity,
-        nextActivity: { name: "Next Session", description: "Another session will follow.", startTime: endTime, endTime: endTime, isPrayer: false },
+        nextActivity: { name: "Next Session", description: "Another session will follow.", startTime: endTime, endTime: endTime, isPrayer: false, id: 'downtime-next' },
         timeUntilNext: formatTimeUntil(endTime),
         loading: false,
         error: null,
@@ -210,47 +214,60 @@ export default function HomePage() {
 
   const handleLogMeal = (mealType: MealMode, description: string) => updateServer({ action: 'add_meal_log', meal: { mealType, description } });
 
-  const handleAddActivity = (activity: Omit<CustomActivity, 'id'>, afterActivityId: string) => {
+  // --- START REFACTORED SCHEDULE MANAGEMENT ---
+  
+  const handleLocalAddActivity = (activity: Omit<CustomActivity, 'id'>, afterActivityId: string) => {
     if (!viewState.settings) return;
+    const newActivity: CustomActivity = { ...activity, id: `custom-${Date.now()}` };
     
-    const tempId = `temp-${Date.now()}`;
-    const newActivity: CustomActivity = { ...activity, id: tempId };
-
-    // Find where to insert the new activity
     const targetIndex = viewState.settings.schedule.findIndex(act => act.id === afterActivityId);
     if (targetIndex === -1) {
-      handleError("Could not find where to add the new activity.");
+      console.error("Could not find activity to add after:", afterActivityId);
       return;
     }
-    
-    // Create the new schedule for the optimistic update
+
     const newScheduleConfig = [...viewState.settings.schedule];
     newScheduleConfig.splice(targetIndex + 1, 0, newActivity);
-    
     const newSettings: UserSettings = { ...viewState.settings, schedule: newScheduleConfig };
     
-    // Re-calculate the schedule optimistically on the client
-    fetchFullSchedule(newSettings).then(optimisticData => {
-      if (optimisticData) {
-        const optimisticState: Partial<ViewState> = {
-          settings: newSettings,
-          schedule: optimisticData.schedule,
-          currentActivity: optimisticData.current,
-          nextActivity: optimisticData.next,
-          timeUntilNext: formatTimeUntil(optimisticData.next.startTime),
-        };
-        // Call updateServer with the real payload and the state to apply optimistically
-        updateServer({ action: 'add_activity', activity, afterActivityId }, optimisticState);
-      } else {
-        // Fallback to non-optimistic update if client-side calculation fails
-        updateServer({ action: 'add_activity', activity, afterActivityId });
-      }
-    });
+    // Recalculate and update the view
+    processServerResponse(newSettings);
+    saveSchedule(newSettings.schedule);
+  };
+  
+  const handleLocalRemoveActivity = (activityId: string) => {
+    if (!viewState.settings) return;
+
+    const newScheduleConfig = viewState.settings.schedule.filter(act => act.id !== activityId);
+    const newSettings: UserSettings = { ...viewState.settings, schedule: newScheduleConfig };
+
+    // Recalculate and update the view
+    processServerResponse(newSettings);
+    saveSchedule(newScheduleConfig);
   };
 
-  const handleRemoveActivity = (activityId: string) => {
-    updateServer({ action: 'remove_activity', activityId });
+  const saveSchedule = async (newSchedule: CustomActivity[]) => {
+    // The server expects the list of custom activities, which is exactly what newSchedule is.
+    await updateServer({ action: 'update_schedule', schedule: newSchedule });
+  }
+
+  // Reorders the activities in the local state.
+  const handleReorderActivities = (reorderedActivities: CustomActivity[]) => {
+    if (!viewState.settings) return;
+    
+    // Create a new schedule that preserves the prayers but uses the reordered custom activities.
+    const prayers = viewState.settings.schedule.filter(act => ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'].includes(act.id));
+    const newScheduleConfig = [...prayers, ...reorderedActivities];
+
+    const newSettings: UserSettings = { ...viewState.settings, schedule: newScheduleConfig };
+    
+    // Re-calculate the full schedule view based on the new order.
+    processServerResponse(newSettings);
+    saveSchedule(newSettings.schedule);
   };
+
+  // --- END REFACTORED SCHEDULE MANAGEMENT ---
+
 
   const requestLocation = async () => {
     setViewState(prev => ({ ...prev, loading: true, error: null }));
@@ -318,16 +335,20 @@ export default function HomePage() {
           mealMode={viewState.settings.mealMode}
           handleSetMealMode={handleSetMealMode}
           handleLogMeal={handleLogMeal}
+          toggleSchedule={() => setShowSchedule(s => !s)}
         />
-        <ScheduleView
-          downtimeMode={viewState.settings.mode === 'downtime'}
-          resetLocation={resetLocation}
-          toggleDowntimeMode={toggleDowntimeMode}
-          schedule={viewState.schedule || []}
-          city={viewState.settings.city || "Unknown"}
-          onAddActivity={handleAddActivity}
-          onRemoveActivity={handleRemoveActivity}
-        />
+        {showSchedule && (
+          <ScheduleView
+            downtimeMode={viewState.settings.mode === 'downtime'}
+            resetLocation={resetLocation}
+            toggleDowntimeMode={toggleDowntimeMode}
+            schedule={viewState.schedule || []}
+            city={viewState.settings.city || "Unknown"}
+            onAddActivity={handleLocalAddActivity} // Use new local handler
+            onRemoveActivity={handleLocalRemoveActivity} // Use new local handler
+            onReorder={handleReorderActivities} // Pass new reorder handler
+          />
+        )}
       </div>
     </main>
   );

@@ -44,7 +44,7 @@ export async function GET() {
 //  UPDATE SETTINGS (POST)
 // =================================================================
 
-type Action = "toggle_mode" | "set_meal_mode" | "toggle_grip_enabled" | "setup_location" | "add_activity" | "remove_activity" | "add_meal_log";
+type Action = "toggle_mode" | "set_meal_mode" | "toggle_grip_enabled" | "setup_location" | "add_activity" | "remove_activity" | "add_meal_log" | "update_schedule";
 
 interface RequestBody {
   action: Action;
@@ -64,6 +64,8 @@ interface RequestBody {
   activityId?: string;
   // For add_meal_log
   meal?: { mealType: MealMode; description: string };
+  // For update_schedule
+  schedule?: CustomActivity[];
 }
 
 const actionHandlers: Record<Action, (settings: UserSettings | null, body: RequestBody) => UserSettings> = {
@@ -147,6 +149,11 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
     const mealLog = [ ...(settings.mealLog || []), newLog ];
     return { ...settings, mealLog };
   },
+  update_schedule: (settings, body) => {
+    if (!settings) throw new Error("Cannot update schedule on uninitialized settings.");
+    if (!body.schedule) throw new Error("Schedule data is missing.");
+    return { ...settings, schedule: body.schedule };
+  }
 };
 
 export async function POST(request: NextRequest) {

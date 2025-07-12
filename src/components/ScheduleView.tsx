@@ -10,8 +10,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { MapPin, PlusCircle, Trash2 } from "lucide-react";
+import { GripVertical, MapPin, PlusCircle, Trash2 } from "lucide-react";
 import { ScheduleItem, CustomActivity, ActivityType } from "@/lib/types";
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
 
 interface ScheduleViewProps {
     downtimeMode: boolean;
@@ -21,6 +25,7 @@ interface ScheduleViewProps {
     city: string;
     onAddActivity: (activity: Omit<CustomActivity, 'id'>, afterActivityId: string) => void;
     onRemoveActivity: (activityId: string) => void;
+    onReorder: (reorderedActivities: CustomActivity[]) => void;
 }
 
 function AddActivityForm({ afterActivityId, onAddActivity }: { afterActivityId: string; onAddActivity: ScheduleViewProps['onAddActivity'] }) {
@@ -63,10 +68,69 @@ function AddActivityForm({ afterActivityId, onAddActivity }: { afterActivityId: 
     );
 }
 
+function SortableScheduleItem({ item, downtimeMode, onRemoveActivity, onAddActivity, formatScheduleTime }: { item: ScheduleItem, downtimeMode: boolean, onRemoveActivity: (id: string) => void, onAddActivity: ScheduleViewProps['onAddActivity'], formatScheduleTime: (date: Date) => string }) {
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        transform,
+        transition,
+    } = useSortable({id: item.id});
+
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+    };
+
+    return (
+        <div ref={setNodeRef} style={style}>
+            <div className={`flex justify-between items-center py-3`}>
+                <div className="flex items-center gap-2">
+                    {!item.isPrayer && (
+                        <button {...attributes} {...listeners} className="cursor-grab text-gray-500">
+                            <GripVertical className="h-5 w-5" />
+                        </button>
+                    )}
+                     {item.isPrayer && <div className="w-7"></div>}
+                    <div>
+                        <p className="font-semibold">{item.name}</p>
+                        <p className={`text-sm ${downtimeMode ? "text-gray-400" : "text-gray-600"}`}>{item.description}</p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <p className="text-right font-mono text-sm">{formatScheduleTime(item.startTime)}</p>
+                    {!item.isPrayer && (
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-500" onClick={() => onRemoveActivity(item.id)}><Trash2 className="h-4 w-4" /></Button>
+                    )}
+                </div>
+            </div>
+            {!item.isPrayer && (
+            <Dialog>
+                <DialogTrigger asChild>
+                    <div className="flex items-center justify-center -my-2">
+                        <button className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-400 py-1">
+                            <PlusCircle className="h-3 w-3"/>
+                            <span>Add Activity</span>
+                        </button>
+                    </div>
+                </DialogTrigger>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Add activity after {item.name}</DialogTitle>
+                    </DialogHeader>
+                    <AddActivityForm afterActivityId={item.id} onAddActivity={onAddActivity} />
+                </DialogContent>
+            </Dialog>
+            )}
+        </div>
+    )
+}
+
+
 export function ScheduleView({
     downtimeMode,
     resetLocation, toggleDowntimeMode,
-    schedule, city, onAddActivity, onRemoveActivity
+    schedule, city, onAddActivity, onRemoveActivity, onReorder
 }: ScheduleViewProps) {
     const [currentTime, setCurrentTime] = useState(new Date());
     useEffect(() => {
@@ -74,44 +138,44 @@ export function ScheduleView({
         return () => clearInterval(timerId);
     }, []);
     const formatScheduleTime = (date: Date) => date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+    
+    const handleDragEnd = (event: DragEndEvent) => {
+        const {active, over} = event;
+        if (over && active.id !== over.id) {
+            const oldIndex = schedule.findIndex(item => item.id === active.id);
+            const newIndex = schedule.findIndex(item => item.id === over.id);
+            if (oldIndex === -1 || newIndex === -1) return;
+            if (schedule[oldIndex].isPrayer || schedule[newIndex].isPrayer) return;
+
+            const reorderedSchedule = arrayMove(schedule, oldIndex, newIndex);
+            
+            // The types are now compatible, so we can just filter.
+            const reorderedCustomActivities = reorderedSchedule.filter(item => !item.isPrayer);
+
+            onReorder(reorderedCustomActivities as CustomActivity[]);
+        }
+    };
+
+    const scheduleIds = schedule.filter(item => !item.isPrayer).map(item => item.id);
 
     return (
         <div className="w-full max-w-2xl mx-auto p-4">
             <Card className={`text-left p-4 mb-4 transition-colors ${downtimeMode ? "bg-black border-gray-800 text-white" : "bg-white"}`}>
-                {schedule.map((item) => (
-                    <div key={item.activityId}>
-                        <div className={`flex justify-between items-center py-3`}>
-                            <div>
-                                <p className="font-semibold">{item.name}</p>
-                                <p className={`text-sm ${downtimeMode ? "text-gray-400" : "text-gray-600"}`}>{item.description}</p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <p className="text-right font-mono text-sm">{formatScheduleTime(item.startTime)}</p>
-                                {!item.isPrayer && (
-                                    <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-500" onClick={() => onRemoveActivity(item.activityId!)}><Trash2 className="h-4 w-4" /></Button>
-                                )}
-                            </div>
-                        </div>
-                        {!item.isPrayer && (
-                        <Dialog>
-                            <DialogTrigger asChild>
-                                <div className="flex items-center justify-center -my-2">
-                                    <button className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-400 py-1">
-                                        <PlusCircle className="h-3 w-3"/>
-                                        <span>Add Activity</span>
-                                    </button>
-                                </div>
-                            </DialogTrigger>
-                            <DialogContent>
-                                <DialogHeader>
-                                    <DialogTitle>Add activity after {item.name}</DialogTitle>
-                                </DialogHeader>
-                                <AddActivityForm afterActivityId={item.activityId!} onAddActivity={onAddActivity} />
-                            </DialogContent>
-                        </Dialog>
-                        )}
-                    </div>
-                ))}
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                    <SortableContext items={scheduleIds} strategy={verticalListSortingStrategy}>
+                        {schedule.map((item) => (
+                            <SortableScheduleItem 
+                                key={item.id} 
+                                item={item} 
+                                downtimeMode={downtimeMode} 
+                                onRemoveActivity={onRemoveActivity} 
+                                onAddActivity={onAddActivity}
+                                formatScheduleTime={formatScheduleTime}
+                            />
+                        ))}
+                    </SortableContext>
+                </DndContext>
             </Card>
 
             <div className={`flex items-center justify-center text-md gap-4 transition-colors ${downtimeMode ? "text-gray-400" : "text-gray-500"}`}>

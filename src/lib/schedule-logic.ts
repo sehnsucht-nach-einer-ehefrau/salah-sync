@@ -23,7 +23,7 @@ const createPrayerScheduleItem = (name: string, time: Date, duration: number): S
     startTime: time,
     endTime: addMinutes(time, duration),
     isPrayer: true,
-    activityId: name.toLowerCase(),
+    id: name.toLowerCase(),
 });
 
 export function calculateSchedule(
@@ -91,7 +91,7 @@ export function calculateSchedule(
           startTime: blockStartTime,
           endTime: blockEndTime,
           isPrayer: false,
-          activityId: `free-${startAnchor.activityId}`,
+          id: `free-${startAnchor.id}`,
         });
         continue; // Move to the next prayer block
       }
@@ -113,7 +113,9 @@ export function calculateSchedule(
               startTime: new Date(currentTime),
               endTime: endTime,
               isPrayer: false,
-              activityId: activity.id,
+              id: activity.id,
+              type: activity.type,
+              duration: activity.duration,
           });
           currentTime = endTime;
       });
@@ -127,7 +129,7 @@ export function calculateSchedule(
     const nextActivityIndex = sortedSchedule.findIndex(item => item.startTime > now);
     if (nextActivityIndex > 0) {
       const prev = sortedSchedule[nextActivityIndex - 1];
-      return { schedule: sortedSchedule, current: { name: "Transition", description: `Preparing for ${sortedSchedule[nextActivityIndex].name}`, startTime: prev.endTime, endTime: sortedSchedule[nextActivityIndex].startTime, isPrayer: false }, next: sortedSchedule[nextActivityIndex] };
+      return { schedule: sortedSchedule, current: { name: "Transition", description: `Preparing for ${sortedSchedule[nextActivityIndex].name}`, startTime: prev.endTime, endTime: sortedSchedule[nextActivityIndex].startTime, isPrayer: false, id: "transition" }, next: sortedSchedule[nextActivityIndex] };
     }
     // If we are still without a current activity, it's likely because we are in a "Free Time" block that hasn't been explicitly found.
     // Let's find the Free Time block manually.
@@ -135,7 +137,7 @@ export function calculateSchedule(
     if (freeTimeIndex !== -1) {
         currentIndex = freeTimeIndex;
     } else {
-        const fallback = { name: "Ready", description: "All activities complete for now.", startTime: now, endTime: now, isPrayer: false };
+        const fallback = { name: "Ready", description: "All activities complete for now.", startTime: now, endTime: now, isPrayer: false, id: "ready" };
         return { schedule: sortedSchedule, current: fallback, next: sortedSchedule[0] || fallback };
     }
   }
