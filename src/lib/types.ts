@@ -37,15 +37,26 @@ export interface CustomActivity {
   duration?: number; // In minutes, for 'action' type
 }
 
+export type DowntimeActivityType = 'duration' | 'interrupt';
+
+export interface DowntimeActivity {
+  name: string;
+  duration: number; // in minutes
+  type: DowntimeActivityType;
+}
+
+export interface PausedState {
+  activity: DowntimeActivity;
+  timeRemaining: number; // in seconds
+}
+
 export interface DowntimeState {
-  lastNotifiedActivity: string;
-  currentActivity: string;
-  activityStartTime: string | null;
-  lastGripTime: string | null;
+  activities: DowntimeActivity[];
+  currentActivityIndex: number;
+  currentActivityStartTime: string | null;
   gripStrengthEnabled: boolean;
-  quranTurn: boolean;
-  timeRemainingOnPause: number | null; 
-  activityBeforePause: string | null;
+  lastGripTime: string | null;
+  pausedState: PausedState | null;
 }
 
 export interface UserSettings {

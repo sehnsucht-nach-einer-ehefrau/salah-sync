@@ -2,7 +2,7 @@
 
 import { kv } from "@vercel/kv";
 import { type NextRequest, NextResponse } from "next/server";
-import { UserSettings, MealMode, CustomActivity } from "@/lib/types";
+import { UserSettings, MealMode, CustomActivity, DowntimeActivity } from "@/lib/types";
 import { randomUUID } from "crypto";
 
 const defaultSchedule: CustomActivity[] = [
@@ -44,7 +44,7 @@ export async function GET() {
 //  UPDATE SETTINGS (POST)
 // =================================================================
 
-type Action = "toggle_mode" | "set_meal_mode" | "toggle_grip_enabled" | "setup_location" | "add_activity" | "remove_activity" | "add_meal_log" | "update_schedule";
+type Action = "toggle_mode" | "set_meal_mode" | "toggle_grip_enabled" | "setup_location" | "add_activity" | "remove_activity" | "add_meal_log" | "update_schedule" | "next_downtime_activity" | "start_grip_strength" | "resume_downtime_activity";
 
 interface RequestBody {
   action: Action;
@@ -113,15 +113,32 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
   },
   toggle_mode: (settings) => {
     if (!settings) throw new Error("Cannot toggle mode on uninitialized settings.");
+    
+    const newMode = settings.mode === "downtime" ? "strict" : "downtime";
+    let downtime = settings.downtime;
+
+    // If switching to downtime for the first time or if it's not configured,
+    // set up a default downtime schedule.
+    if (newMode === 'downtime' && (!downtime || !downtime.activities || downtime.activities.length === 0)) {
+      const defaultDowntimeActivities: DowntimeActivity[] = [
+        { name: "Quran Reading", duration: 30, type: 'duration' },
+        { name: "LeetCode Session", duration: 30, type: 'duration' },
+      ];
+      downtime = {
+        activities: defaultDowntimeActivities,
+        currentActivityIndex: 0,
+        currentActivityStartTime: new Date().toISOString(),
+        gripStrengthEnabled: true,
+        lastGripTime: null,
+        pausedState: null,
+      };
+    }
+
     return {
       ...settings,
-      mode: settings.mode === "downtime" ? "strict" : "downtime",
+      mode: newMode,
       lastNotifiedActivity: "", // Reset notification state on mode change
-      downtime: {
-        ...settings.downtime,
-        lastNotifiedActivity: "",
-        currentActivity: "Starting...",
-      },
+      downtime: downtime || {},
     };
   },
   set_meal_mode: (settings, body) => {
@@ -153,6 +170,82 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
     if (!settings) throw new Error("Cannot update schedule on uninitialized settings.");
     if (!body.schedule) throw new Error("Schedule data is missing.");
     return { ...settings, schedule: body.schedule };
+  },
+  next_downtime_activity: (settings) => {
+    if (!settings || !settings.downtime) throw new Error("Downtime not configured");
+    const { downtime } = settings;
+    const activities = downtime.activities || [];
+    if (activities.length === 0) throw new Error("Downtime not configured");
+
+    const currentIndex = downtime.currentActivityIndex ?? 0;
+    const nextIndex = (currentIndex + 1) % activities.length;
+    return {
+      ...settings,
+      downtime: {
+        ...downtime,
+        currentActivityIndex: nextIndex,
+        currentActivityStartTime: new Date().toISOString(),
+        pausedState: null, // Clear any paused state
+      }
+    };
+  },
+  start_grip_strength: (settings) => {
+    if (!settings || !settings.downtime) throw new Error("Downtime not configured");
+    const { downtime } = settings;
+    if (downtime.pausedState) return settings; // Already paused
+
+    const { activities, currentActivityIndex, currentActivityStartTime } = downtime;
+    if (!activities || typeof currentActivityIndex !== 'number' || !currentActivityStartTime) throw new Error("Downtime state is incomplete.");
+
+    const currentActivity = activities[currentActivityIndex];
+    const startTime = new Date(currentActivityStartTime);
+    const elapsed = (new Date().getTime() - startTime.getTime()) / 1000; // in seconds
+    const durationInSeconds = currentActivity.duration * 60;
+    const timeRemaining = Math.max(0, durationInSeconds - elapsed);
+
+    const pausedState = {
+      activity: currentActivity,
+      timeRemaining,
+    };
+
+    const gripActivity: DowntimeActivity = { name: "Grip Strength Training", duration: 1, type: 'interrupt' };
+
+    return {
+      ...settings,
+      downtime: {
+        ...downtime,
+        activities: [gripActivity, ...activities],
+        currentActivityIndex: 0,
+        currentActivityStartTime: new Date().toISOString(),
+        lastGripTime: new Date().toISOString(),
+        pausedState: pausedState,
+      }
+    };
+  },
+  resume_downtime_activity: (settings) => {
+    if (!settings || !settings.downtime || !settings.downtime.pausedState) {
+      throw new Error("No paused activity to resume");
+    }
+    const { downtime } = settings;
+    const { activities, pausedState } = downtime;
+
+    // This check is now redundant due to the guard above, but it helps TypeScript's control flow analysis.
+    if (!pausedState) throw new Error("No paused activity to resume");
+
+    const originalActivities = (activities || []).filter(a => a.type !== 'interrupt');
+    const originalActivityName = pausedState.activity.name;
+    const originalIndex = originalActivities.findIndex(a => a.name === originalActivityName);
+
+    return {
+      ...settings,
+      downtime: {
+        ...downtime,
+        activities: originalActivities,
+        currentActivityIndex: originalIndex !== -1 ? originalIndex : 0,
+        currentActivityStartTime: new Date().toISOString(),
+        pausedState: null,
+      }
+    };
   }
 };
 

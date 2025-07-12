@@ -70,33 +70,43 @@ export default function HomePage() {
   const processServerResponse = useCallback(async (settings: UserSettings) => {
     // === DOWNTIME MODE LOGIC ===
     if (settings.mode === 'downtime') {
-      const downtimeState = settings.downtime || {};
-      const activityName = downtimeState.currentActivity || "Starting...";
-      const startTime = downtimeState.activityStartTime ? new Date(downtimeState.activityStartTime) : new Date();
-      const duration = activityName === "Grip Strength Training" ? 1 : 30;
-      const endTime = new Date(startTime.getTime() + duration * 60000);
+      const downtime = settings.downtime;
 
-      const downtimeActivity: ScheduleItem = {
-        name: activityName,
-        description: downtimeState.lastNotifiedActivity || "Downtime activity in progress.",
+      if (!downtime || !downtime.activities || downtime.activities.length === 0) {
+        handleError("Downtime mode is not configured properly.");
+        return;
+      }
+
+      const currentActivityIndex = downtime.currentActivityIndex ?? 0;
+      const current = downtime.activities[currentActivityIndex];
+      const startTime = downtime.currentActivityStartTime ? new Date(downtime.currentActivityStartTime) : new Date();
+      const endTime = new Date(startTime.getTime() + current.duration * 60000);
+
+      const currentActivity: ScheduleItem = {
+        name: current.name,
+        description: `Time remaining for ${current.name}`,
         startTime: startTime,
         endTime: endTime,
         isPrayer: false,
-        id: 'downtime-current',
+        id: `downtime-${downtime.currentActivityIndex}`,
       };
 
-      const staticDowntimeSchedule: ScheduleItem[] = [
-        { name: "Quran Reading", description: "30-minute session", startTime: new Date(), endTime: new Date(), isPrayer: false, id: 'downtime-quran' },
-        { name: "LeetCode Session", description: "30-minute session", startTime: new Date(), endTime: new Date(), isPrayer: false, id: 'downtime-leetcode' },
-        { name: "Grip Strength Training", description: "1-minute set every 5 minutes", startTime: new Date(), endTime: new Date(), isPrayer: false, id: 'downtime-grip' },
-      ];
+      // The schedule view in downtime mode will show the list of configured downtime activities.
+      const downtimeSchedule: ScheduleItem[] = downtime.activities.map((act, index) => ({
+        name: act.name,
+        description: `${act.duration} minute ${act.type}`,
+        startTime: new Date(), // Placeholder, not used for display
+        endTime: new Date(),   // Placeholder, not used for display
+        isPrayer: false,
+        id: `downtime-config-${index}`,
+      }));
       
       setViewState(prev => ({
         ...prev,
         settings,
-        schedule: staticDowntimeSchedule,
-        currentActivity: downtimeActivity,
-        nextActivity: { name: "Next Session", description: "Another session will follow.", startTime: endTime, endTime: endTime, isPrayer: false, id: 'downtime-next' },
+        schedule: downtimeSchedule,
+        currentActivity: currentActivity,
+        nextActivity: { name: "Downtime", description: "Next activity will start after this.", startTime: endTime, endTime: endTime, isPrayer: false, id: 'downtime-next' },
         timeUntilNext: formatTimeUntil(endTime),
         loading: false,
         error: null,
@@ -214,66 +224,63 @@ export default function HomePage() {
 
   const handleLogMeal = (mealType: MealMode, description: string) => updateServer({ action: 'add_meal_log', meal: { mealType, description } });
 
-  // --- START REFACTORED SCHEDULE MANAGEMENT ---
-  
-  const handleLocalAddActivity = (activity: Omit<CustomActivity, 'id'>, afterActivityId: string) => {
-    if (!viewState.settings) return;
+  // --- START SIMPLIFIED SCHEDULE MANAGEMENT ---
 
-    // If adding after a "Free Time" block, get the ID of the real activity that came before it.
-    let realAfterActivityId = afterActivityId;
-    if (afterActivityId.startsWith('free-')) {
-      realAfterActivityId = afterActivityId.substring(5);
-    }
-    
-    const newActivity: CustomActivity = { ...activity, id: `custom-${Date.now()}` };
-    
-    const targetIndex = viewState.settings.schedule.findIndex(act => act.id === realAfterActivityId);
-    if (targetIndex === -1) {
-      console.error("Could not find activity to add after:", realAfterActivityId);
+  const handleAddActivity = (activity: Omit<CustomActivity, 'id'>, afterActivityId: string) => {
+    // The backend will handle adding the activity to the schedule.
+    updateServer({ action: 'add_activity', activity, afterActivityId });
+  };
+
+  const handleRemoveActivity = (activityId: string) => {
+    // The backend will handle removing the activity.
+    updateServer({ action: 'remove_activity', activityId });
+  };
+
+  const handleReorderActivities = (reorderedActivities: CustomActivity[]) => {
+    // The backend will handle reordering.
+    // We only need to send the custom activities, as prayers are fixed.
+    updateServer({ action: 'update_schedule', schedule: reorderedActivities });
+  };
+
+  // --- END SIMPLIFIED SCHEDULE MANAGEMENT ---
+
+  // Effect for managing downtime mode state machine
+  useEffect(() => {
+    if (viewState.settings?.mode !== 'downtime' || !viewState.settings.downtime) {
       return;
     }
 
-    const newScheduleConfig = [...viewState.settings.schedule];
-    newScheduleConfig.splice(targetIndex + 1, 0, newActivity);
-    const newSettings: UserSettings = { ...viewState.settings, schedule: newScheduleConfig };
-    
-    // Recalculate and update the view
-    processServerResponse(newSettings);
-    saveSchedule(newSettings.schedule);
-  };
-  
-  const handleLocalRemoveActivity = (activityId: string) => {
-    if (!viewState.settings) return;
+    const downtimeTimer = setInterval(() => {
+      const { settings, currentActivity } = viewState;
+      if (!settings || !settings.downtime || !currentActivity) return;
 
-    const newScheduleConfig = viewState.settings.schedule.filter(act => act.id !== activityId);
-    const newSettings: UserSettings = { ...viewState.settings, schedule: newScheduleConfig };
+      const { downtime } = settings;
+      const now = new Date();
 
-    // Recalculate and update the view
-    processServerResponse(newSettings);
-    saveSchedule(newScheduleConfig);
-  };
+      // 1. Check if current activity is finished
+      if (currentActivity.endTime && now >= currentActivity.endTime) {
+        if (downtime.pausedState) {
+          // If a grip session ends, resume the paused activity
+          updateServer({ action: 'resume_downtime_activity' });
+        } else {
+          // Otherwise, move to the next activity in the queue
+          updateServer({ action: 'next_downtime_activity' });
+        }
+        return; // Stop further checks in this cycle
+      }
 
-  const saveSchedule = async (newSchedule: CustomActivity[]) => {
-    // The server expects the list of custom activities, which is exactly what newSchedule is.
-    await updateServer({ action: 'update_schedule', schedule: newSchedule });
-  }
+      // 2. Check if it's time for a grip strength interruption
+      if (downtime.gripStrengthEnabled && !downtime.pausedState) {
+        const lastGrip = downtime.lastGripTime ? new Date(downtime.lastGripTime) : null;
+        const fiveMinutes = 5 * 60 * 1000;
+        if (!lastGrip || now.getTime() - lastGrip.getTime() >= fiveMinutes) {
+          updateServer({ action: 'start_grip_strength' });
+        }
+      }
+    }, 1000); // Run every second
 
-  // Reorders the activities in the local state.
-  const handleReorderActivities = (reorderedActivities: CustomActivity[]) => {
-    if (!viewState.settings) return;
-    
-    // Create a new schedule that preserves the prayers but uses the reordered custom activities.
-    const prayers = viewState.settings.schedule.filter(act => ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'].includes(act.id));
-    const newScheduleConfig = [...prayers, ...reorderedActivities];
-
-    const newSettings: UserSettings = { ...viewState.settings, schedule: newScheduleConfig };
-    
-    // Re-calculate the full schedule view based on the new order.
-    processServerResponse(newSettings);
-    saveSchedule(newSettings.schedule);
-  };
-
-  // --- END REFACTORED SCHEDULE MANAGEMENT ---
+    return () => clearInterval(downtimeTimer);
+  }, [viewState.settings, viewState.currentActivity, updateServer]);
 
 
   const requestLocation = async () => {
@@ -330,7 +337,7 @@ export default function HomePage() {
   if (!viewState.currentActivity) return <LoadingState message="Calculating Schedule..." />;
 
   return (
-    <main className="flex flex-col items-center justify-start min-h-screen w-full p-4">
+    <main className={`flex flex-col items-center min-h-screen w-full p-4 ${showSchedule ? 'justify-start' : 'justify-center'}`}>
       <div className="w-full max-w-2xl">
         <MainCard
           downtimeMode={viewState.settings.mode === 'downtime'}
@@ -351,8 +358,8 @@ export default function HomePage() {
             toggleDowntimeMode={toggleDowntimeMode}
             schedule={viewState.schedule || []}
             city={viewState.settings.city || "Unknown"}
-            onAddActivity={handleLocalAddActivity} // Use new local handler
-            onRemoveActivity={handleLocalRemoveActivity} // Use new local handler
+            onAddActivity={handleAddActivity}
+            onRemoveActivity={handleRemoveActivity}
             onReorder={handleReorderActivities} // Pass new reorder handler
           />
         )}
