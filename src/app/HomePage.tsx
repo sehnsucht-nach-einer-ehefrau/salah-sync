@@ -8,6 +8,10 @@ import { ScheduleView } from "@/components/ScheduleView";
 import { MainCard } from "@/components/MainCard";
 import { calculateSchedule } from "@/lib/schedule-logic";
 import { Button } from "@/components/ui/button";
+import { AnimatePresence, motion } from 'framer-motion';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { MapPin } from 'lucide-react';
 
 interface ViewState {
   settings: UserSettings | null;
@@ -30,8 +34,8 @@ export default function HomePage() {
     error: null,
   });
   
-  // New state for local schedule management and UI toggling
   const [showSchedule, setShowSchedule] = useState(true);
+  const [currentTime, setCurrentTime] = useState(new Date());
 
   const handleError = (message: string, error?: unknown) => {
     console.error(message, error);
@@ -80,7 +84,8 @@ export default function HomePage() {
       const currentActivityIndex = downtime.currentActivityIndex ?? 0;
       const current = downtime.activities[currentActivityIndex];
       const startTime = downtime.currentActivityStartTime ? new Date(downtime.currentActivityStartTime) : new Date();
-      const endTime = new Date(startTime.getTime() + current.duration * 60000);
+      const durationInMinutes = current.duration ?? 0; // Default to 0 if duration is not set
+      const endTime = new Date(startTime.getTime() + durationInMinutes * 60000);
 
       const currentActivity: ScheduleItem = {
         name: current.name,
@@ -174,11 +179,12 @@ export default function HomePage() {
         if (!prev.nextActivity?.startTime) return prev;
         return { ...prev, timeUntilNext: formatTimeUntil(prev.nextActivity.startTime) };
       });
+      setCurrentTime(new Date());
     }, 1000);
     return () => clearInterval(timer);
   }, []);
 
-  const updateServer = async (payload: object, optimisticState?: Partial<ViewState>) => {
+  const updateServer = useCallback(async (payload: object, optimisticState?: Partial<ViewState>) => {
     let previousState: ViewState | null = null;
 
     if (optimisticState) {
@@ -207,14 +213,14 @@ export default function HomePage() {
         throw new Error(data.error || "Server response was not successful.");
       }
 
-    } catch (e) {
+    } catch (err) {
       // If the update fails, roll back the optimistic change
       if (previousState) {
         setViewState(previousState);
       }
-      handleError("Failed to update preferences.", e);
+      handleError("Failed to update preferences.", err);
     }
-  };
+  }, [processServerResponse]);
 
   const toggleDowntimeMode = () => updateServer({ action: "toggle_mode" });
 
@@ -351,18 +357,43 @@ export default function HomePage() {
           handleLogMeal={handleLogMeal}
           toggleSchedule={() => setShowSchedule(s => !s)}
         />
-        {showSchedule && (
-          <ScheduleView
-            downtimeMode={viewState.settings.mode === 'downtime'}
-            resetLocation={resetLocation}
-            toggleDowntimeMode={toggleDowntimeMode}
-            schedule={viewState.schedule || []}
-            city={viewState.settings.city || "Unknown"}
-            onAddActivity={handleAddActivity}
-            onRemoveActivity={handleRemoveActivity}
-            onReorder={handleReorderActivities} // Pass new reorder handler
-          />
-        )}
+        <AnimatePresence>
+          {showSchedule && (
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.2 }}
+            >
+              <ScheduleView 
+                downtimeMode={viewState.settings.mode === 'downtime'}
+                schedule={viewState.schedule || []}
+                customActivities={viewState.settings.customActivities || []}
+                onAddActivity={handleAddActivity}
+                onRemoveActivity={handleRemoveActivity}
+                onReorder={handleReorderActivities}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <div className={`flex items-center justify-center text-md gap-4 mt-4 transition-colors ${viewState.settings.mode === 'downtime' ? "text-gray-400" : "text-gray-500"}`}>
+            <button onClick={resetLocation} className="flex items-center hover:opacity-70 transition-opacity"><MapPin className="h-4 w-4 mr-1 flex-shrink-0" /><span className="truncate">{viewState.settings.city || "Unknown"}</span></button>
+            <span>•</span>
+            <TooltipProvider delayDuration={0}>
+                <Tooltip>
+                    <TooltipTrigger asChild><span className="font-mono min-w-[70px] text-center">{currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span></TooltipTrigger>
+                    <TooltipContent className={viewState.settings.mode === 'downtime' ? "bg-black text-white border-gray-700" : ""}><p>{currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true })}</p></TooltipContent>
+                </Tooltip>
+            </TooltipProvider>
+            <span>•</span>
+            <AlertDialog>
+                <AlertDialogTrigger asChild><button className="hover:opacity-70 transition-opacity">{viewState.settings.mode === 'downtime' ? "Exit Downtime" : "Enter Downtime"}</button></AlertDialogTrigger>
+                <AlertDialogContent>
+                    <AlertDialogHeader><AlertDialogTitle className="text-2xl">{viewState.settings.mode === 'downtime' ? "Exit Downtime Mode?" : "Enter Downtime Mode?"}</AlertDialogTitle><AlertDialogDescription className="text-base">{viewState.settings.mode === 'downtime' ? "This will return to your strict, testosterone-optimized schedule." : "This will switch to server-managed Quran/LeetCode sessions with grip training notifications."}</AlertDialogDescription></AlertDialogHeader>
+                    <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={toggleDowntimeMode} className="bg-black hover:bg-gray-800 text-white">{viewState.settings.mode === 'downtime' ? "Exit Downtime" : "Enter Downtime"}</AlertDialogAction></AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+        </div>
       </div>
     </main>
   );

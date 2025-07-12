@@ -1,16 +1,16 @@
 "use client";
 
 import * as React from "react";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { GripVertical, MapPin, PlusCircle, Trash2 } from "lucide-react";
+
+import { GripVertical, PlusCircle, Trash2 } from "lucide-react";
 import { ScheduleItem, CustomActivity, ActivityType } from "@/lib/types";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -19,10 +19,8 @@ import { CSS } from '@dnd-kit/utilities';
 
 interface ScheduleViewProps {
     downtimeMode: boolean;
-    resetLocation: () => void;
-    toggleDowntimeMode: () => void;
     schedule: ScheduleItem[];
-    city: string;
+    customActivities: CustomActivity[]; // The original list of custom activities
     onAddActivity: (activity: Omit<CustomActivity, 'id'>, afterActivityId: string) => void;
     onRemoveActivity: (activityId: string) => void;
     onReorder: (reorderedActivities: CustomActivity[]) => void;
@@ -134,14 +132,12 @@ function SortableScheduleItem({ item, downtimeMode, onRemoveActivity, onAddActiv
 
 export function ScheduleView({
     downtimeMode,
-    resetLocation, toggleDowntimeMode,
-    schedule, city, onAddActivity, onRemoveActivity, onReorder
+    schedule,
+    customActivities,
+    onAddActivity,
+    onRemoveActivity,
+    onReorder
 }: ScheduleViewProps) {
-    const [currentTime, setCurrentTime] = useState(new Date());
-    useEffect(() => {
-        const timerId = setInterval(() => setCurrentTime(new Date()), 1000);
-        return () => clearInterval(timerId);
-    }, []);
     const formatScheduleTime = (date: Date) => date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
     const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
     
@@ -160,10 +156,22 @@ export function ScheduleView({
 
             const reorderedSchedule = arrayMove(schedule, oldIndex, newIndex);
             
-            // The types are now compatible, so we can just filter.
-            const reorderedCustomActivities = reorderedSchedule.filter(item => !item.isPrayer);
+            // Get the IDs of the reordered custom (non-prayer) activities.
+            const reorderedIds = reorderedSchedule
+                .filter(item => !item.isPrayer && !CORE_ACTIVITY_IDS.includes(item.id))
+                .map(item => item.id);
 
-            onReorder(reorderedCustomActivities as CustomActivity[]);
+            // Map the ordered IDs back to the original CustomActivity objects.
+            const reorderedCustomActivities = reorderedIds.map(id => {
+                const originalActivity = customActivities.find(act => act.id === id);
+                if (!originalActivity) {
+                    // This should theoretically not happen if data is consistent.
+                    throw new Error(`Could not find original activity for id: ${id}`);
+                }
+                return originalActivity;
+            });
+
+            onReorder(reorderedCustomActivities);
         }
     };
 
@@ -187,25 +195,6 @@ export function ScheduleView({
                     </SortableContext>
                 </DndContext>
             </Card>
-
-            <div className={`flex items-center justify-center text-md gap-4 transition-colors ${downtimeMode ? "text-gray-400" : "text-gray-500"}`}>
-                <button onClick={resetLocation} className="flex items-center hover:opacity-70 transition-opacity"><MapPin className="h-4 w-4 mr-1 flex-shrink-0" /><span className="truncate">{city}</span></button>
-                <span>•</span>
-                <TooltipProvider delayDuration={0}>
-                    <Tooltip>
-                        <TooltipTrigger asChild><span className="font-mono min-w-[70px] text-center">{currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span></TooltipTrigger>
-                        <TooltipContent className={downtimeMode ? "bg-black text-white border-gray-700" : ""}><p>{currentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true })}</p></TooltipContent>
-                    </Tooltip>
-                </TooltipProvider>
-                <span>•</span>
-                <AlertDialog>
-                    <AlertDialogTrigger asChild><button className="hover:opacity-70 transition-opacity">{downtimeMode ? "Exit Downtime" : "Enter Downtime"}</button></AlertDialogTrigger>
-                    <AlertDialogContent>
-                        <AlertDialogHeader><AlertDialogTitle className="text-2xl">{downtimeMode ? "Exit Downtime Mode?" : "Enter Downtime Mode?"}</AlertDialogTitle><AlertDialogDescription className="text-base">{downtimeMode ? "This will return to your strict, testosterone-optimized schedule." : "This will switch to server-managed Quran/LeetCode sessions with grip training notifications."}</AlertDialogDescription></AlertDialogHeader>
-                        <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={toggleDowntimeMode} className="bg-black hover:bg-gray-800 text-white">{downtimeMode ? "Exit Downtime" : "Enter Downtime"}</AlertDialogAction></AlertDialogFooter>
-                    </AlertDialogContent>
-                </AlertDialog>
-            </div>
         </div>
     )
 } 

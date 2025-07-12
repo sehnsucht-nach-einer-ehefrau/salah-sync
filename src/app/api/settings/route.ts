@@ -2,15 +2,25 @@
 
 import { kv } from "@vercel/kv";
 import { type NextRequest, NextResponse } from "next/server";
-import { UserSettings, MealMode, CustomActivity, DowntimeActivity } from "@/lib/types";
+import { UserSettings, MealMode, CustomActivity } from "@/lib/types";
+
+// Define a type for the old settings structure for safe migration
+type LegacySettings = Omit<UserSettings, 'customActivities'> & { schedule: CustomActivity[] };
+
+function isLegacySettings(settings: unknown): settings is LegacySettings {
+  return (
+    typeof settings === 'object' &&
+    settings !== null &&
+    'schedule' in settings &&
+    !('customActivities' in settings)
+  );
+}
 import { randomUUID } from "crypto";
 
-const defaultSchedule: CustomActivity[] = [
-  { id: 'fajr', name: 'Fajr', type: 'action', duration: 15 },
-  { id: 'dhuhr', name: 'Dhuhr', type: 'action', duration: 15 },
-  { id: 'asr', name: 'Asr', type: 'action', duration: 15 },
-  { id: 'maghrib', name: 'Maghrib', type: 'action', duration: 15 },
-  { id: 'isha', name: 'Isha', type: 'action', duration: 15 },
+const defaultCustomActivities: CustomActivity[] = [
+  { id: 'read-quran', name: 'Read Quran', type: 'filler' },
+  { id: 'work-out', name: 'Work Out', type: 'action', duration: 60 },
+  { id: 'arabic-studies', name: 'Arabic Studies', type: 'action', duration: 45 },
 ];
 
 // =================================================================
@@ -25,11 +35,15 @@ export async function GET() {
       return NextResponse.json({ error: "Settings not found. Please set location first." }, { status: 404 });
     }
 
-    // Data migration: If settings from an old version are missing the schedule, add the default one.
-    if (!settings.schedule || !Array.isArray(settings.schedule) || settings.schedule.length === 0) {
-      settings.schedule = defaultSchedule;
-      // Persist the migrated settings back to KV. No need to `await` this.
-      kv.set(userKey, settings).catch(console.error);
+    // Data migration for users from old versions
+    if (isLegacySettings(settings)) {
+      const { schedule, ...rest } = settings;
+      const migratedSettings: UserSettings = {
+        ...rest,
+        customActivities: schedule || defaultCustomActivities,
+      };
+      await kv.set(userKey, migratedSettings);
+      return NextResponse.json(migratedSettings);
     }
 
     return NextResponse.json(settings);
@@ -44,28 +58,21 @@ export async function GET() {
 //  UPDATE SETTINGS (POST)
 // =================================================================
 
-type Action = "toggle_mode" | "set_meal_mode" | "toggle_grip_enabled" | "setup_location" | "add_activity" | "remove_activity" | "add_meal_log" | "update_schedule" | "next_downtime_activity" | "start_grip_strength" | "resume_downtime_activity";
+type Action = "toggle_mode" | "set_meal_mode" | "toggle_grip_enabled" | "setup_location" | "add_activity" | "remove_activity" | "add_meal_log" | "update_activities" | "next_downtime_activity" | "start_grip_strength" | "resume_downtime_activity";
 
 interface RequestBody {
   action: Action;
-  // For set_meal_mode
   mode?: MealMode;
-  // For toggle_grip_enabled
   isEnabled?: boolean;
-  // For setup_location
   latitude?: number;
   longitude?: number;
   city?: string;
   timezone?: string;
-  // For add_activity
   activity?: Omit<CustomActivity, 'id'>;
-  afterActivityId?: string; // ID of the activity to insert after
-  // For remove_activity
+  afterActivityId?: string;
   activityId?: string;
-  // For add_meal_log
   meal?: { mealType: MealMode; description: string };
-  // For update_schedule
-  schedule?: CustomActivity[];
+  activities?: CustomActivity[];
 }
 
 const actionHandlers: Record<Action, (settings: UserSettings | null, body: RequestBody) => UserSettings> = {
@@ -79,40 +86,43 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
       longitude,
       city,
       timezone,
+      method: 2, // ISNA
+      school: 1, // Hanafi
       mode: 'strict',
+      customActivities: defaultCustomActivities,
       mealMode: 'maintenance',
+      meals: {
+        cutting: { breakfast: "", lunch: "", dinner: "" },
+        maintenance: { breakfast: "", lunch: "", dinner: "" },
+        bulking: { breakfast: "", lunch: "", dinner: "" },
+      },
       lastNotifiedActivity: "",
-      downtime: {},
-      schedule: defaultSchedule,
       mealLog: [],
     };
   },
   add_activity: (settings, body) => {
     if (!settings) throw new Error("Cannot add activity to uninitialized settings.");
     if (!body.activity) throw new Error("Activity data is missing.");
-    if (!body.afterActivityId) throw new Error("Target activity ID is missing.");
-
-    // Ensure the schedule exists and is an array before attempting to modify it.
-    const schedule = settings.schedule || [];
 
     const newActivity: CustomActivity = { ...body.activity, id: randomUUID() };
-    const targetIndex = schedule.findIndex(act => act.id === body.afterActivityId);
-    if (targetIndex === -1) throw new Error("Target activity not found.");
+    const customActivities = [...(settings.customActivities || [])];
+    
+    if (body.afterActivityId) {
+        const targetIndex = customActivities.findIndex(act => act.id === body.afterActivityId);
+        if (targetIndex === -1) throw new Error("Target activity not found.");
+        customActivities.splice(targetIndex + 1, 0, newActivity);
+    } else {
+        customActivities.push(newActivity);
+    }
 
-    const newSchedule = [...schedule];
-    newSchedule.splice(targetIndex + 1, 0, newActivity);
-
-    return { ...settings, schedule: newSchedule };
+    return { ...settings, customActivities };
   },
   remove_activity: (settings, body) => {
     if (!settings) throw new Error("Cannot remove activity from uninitialized settings.");
     if (!body.activityId) throw new Error("Activity ID to remove is missing.");
-    if (['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'].includes(body.activityId)) {
-        throw new Error("Cannot remove prayer activities.");
-    }
     
-    const newSchedule = settings.schedule.filter(act => act.id !== body.activityId);
-    return { ...settings, schedule: newSchedule };
+    const newActivities = settings.customActivities.filter(act => act.id !== body.activityId);
+    return { ...settings, customActivities: newActivities };
   },
   toggle_mode: (settings) => {
     if (!settings) throw new Error("Cannot toggle mode on uninitialized settings.");
@@ -120,59 +130,55 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
     const newMode = settings.mode === "downtime" ? "strict" : "downtime";
     let downtime = settings.downtime;
 
-    // If switching to downtime for the first time or if it's not configured,
-    // set up a default downtime schedule.
     if (newMode === 'downtime' && (!downtime || !downtime.activities || downtime.activities.length === 0)) {
-      const defaultDowntimeActivities: DowntimeActivity[] = [
-        { name: "Quran Reading", duration: 30, type: 'duration' },
-        { name: "LeetCode Session", duration: 30, type: 'duration' },
+      const defaultDowntimeActivities: CustomActivity[] = [
+        { id: 'quran-downtime', name: "Quran Reading", type: 'action', duration: 30 },
+        { id: 'leetcode-downtime', name: "LeetCode Session", type: 'action', duration: 30 },
       ];
       downtime = {
         activities: defaultDowntimeActivities,
         currentActivityIndex: 0,
-        currentActivityStartTime: new Date().toISOString(),
+        currentActivityStartTime: Date.now(),
         gripStrengthEnabled: true,
-        lastGripTime: null,
-        pausedState: null,
+        lastGripTime: 0,
       };
     }
 
     return {
       ...settings,
       mode: newMode,
-      lastNotifiedActivity: "", // Reset notification state on mode change
-      downtime: downtime || {},
+      lastNotifiedActivity: "",
+      downtime,
     };
   },
   set_meal_mode: (settings, body) => {
     if (!settings) throw new Error("Cannot set meal mode on uninitialized settings.");
-    if (!body.mode || !["bulking", "maintenance", "cutting"].includes(body.mode)) {
+    if (!body.mode || !["bulking", "maintenance", "cutting", "log"].includes(body.mode)) {
       throw new Error("Invalid 'mode' for set_meal_mode action.");
     }
     return { ...settings, mealMode: body.mode };
   },
   toggle_grip_enabled: (settings, body) => {
-    if (!settings) throw new Error("Cannot toggle grip on uninitialized settings.");
+    if (!settings || !settings.downtime) throw new Error("Cannot toggle grip on uninitialized settings.");
     if (typeof body.isEnabled !== "boolean") {
       throw new Error("Invalid 'isEnabled' flag for toggle_grip_enabled action.");
     }
-    const downtime = settings.downtime || {};
     return {
       ...settings,
-      downtime: { ...downtime, gripStrengthEnabled: body.isEnabled },
+      downtime: { ...settings.downtime, gripStrengthEnabled: body.isEnabled },
     };
   },
   add_meal_log: (settings, body) => {
     if (!settings) throw new Error("Cannot add meal log to uninitialized settings.");
     if (!body.meal) throw new Error("Meal data is missing.");
-    const newLog = { ...body.meal, id: randomUUID(), timestamp: new Date().toISOString() };
+    const newLog = { meal: body.meal.description, timestamp: Date.now() };
     const mealLog = [ ...(settings.mealLog || []), newLog ];
     return { ...settings, mealLog };
   },
-  update_schedule: (settings, body) => {
-    if (!settings) throw new Error("Cannot update schedule on uninitialized settings.");
-    if (!body.schedule) throw new Error("Schedule data is missing.");
-    return { ...settings, schedule: body.schedule };
+  update_activities: (settings, body) => {
+    if (!settings) throw new Error("Cannot update activities on uninitialized settings.");
+    if (!body.activities) throw new Error("Activities data is missing.");
+    return { ...settings, customActivities: body.activities };
   },
   next_downtime_activity: (settings) => {
     if (!settings || !settings.downtime) throw new Error("Downtime not configured");
@@ -187,8 +193,8 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
       downtime: {
         ...downtime,
         currentActivityIndex: nextIndex,
-        currentActivityStartTime: new Date().toISOString(),
-        pausedState: null, // Clear any paused state
+        currentActivityStartTime: Date.now(),
+        pausedState: undefined, // Clear any paused state
       }
     };
   },
@@ -201,17 +207,18 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
     if (!activities || typeof currentActivityIndex !== 'number' || !currentActivityStartTime) throw new Error("Downtime state is incomplete.");
 
     const currentActivity = activities[currentActivityIndex];
-    const startTime = new Date(currentActivityStartTime);
-    const elapsed = (new Date().getTime() - startTime.getTime()) / 1000; // in seconds
-    const durationInSeconds = currentActivity.duration * 60;
-    const timeRemaining = Math.max(0, durationInSeconds - elapsed);
+    if (typeof currentActivity.duration !== 'number') return settings; // Cannot pause an activity without a duration
+
+    const elapsed = Date.now() - currentActivityStartTime; // in ms
+    const durationInMs = currentActivity.duration * 60 * 1000;
+    const remainingTime = Math.max(0, durationInMs - elapsed);
 
     const pausedState = {
       activity: currentActivity,
-      timeRemaining,
+      remainingTime,
     };
 
-    const gripActivity: DowntimeActivity = { name: "Grip Strength Training", duration: 1, type: 'interrupt' };
+    const gripActivity: CustomActivity = { id: 'grip-strength', name: "Grip Strength Training", type: 'action', duration: 1 };
 
     return {
       ...settings,
@@ -219,8 +226,8 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
         ...downtime,
         activities: [gripActivity, ...activities],
         currentActivityIndex: 0,
-        currentActivityStartTime: new Date().toISOString(),
-        lastGripTime: new Date().toISOString(),
+        currentActivityStartTime: Date.now(),
+        lastGripTime: Date.now(),
         pausedState: pausedState,
       }
     };
@@ -231,13 +238,12 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
     }
     const { downtime } = settings;
     const { activities, pausedState } = downtime;
-
-    // This check is now redundant due to the guard above, but it helps TypeScript's control flow analysis.
     if (!pausedState) throw new Error("No paused activity to resume");
 
-    const originalActivities = (activities || []).filter(a => a.type !== 'interrupt');
-    const originalActivityName = pausedState.activity.name;
-    const originalIndex = originalActivities.findIndex(a => a.name === originalActivityName);
+    // Filter out the temporary grip activity
+    const originalActivities = (activities || []).filter(a => a.id !== 'grip-strength');
+    const originalActivityId = pausedState.activity.id;
+    const originalIndex = originalActivities.findIndex(a => a.id === originalActivityId);
 
     return {
       ...settings,
@@ -245,11 +251,11 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
         ...downtime,
         activities: originalActivities,
         currentActivityIndex: originalIndex !== -1 ? originalIndex : 0,
-        currentActivityStartTime: new Date().toISOString(),
-        pausedState: null,
+        currentActivityStartTime: Date.now(),
+        pausedState: undefined,
       }
     };
-  }
+  },
 };
 
 export async function POST(request: NextRequest) {

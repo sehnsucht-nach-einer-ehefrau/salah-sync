@@ -3,8 +3,9 @@
 import { kv } from "@vercel/kv";
 import { type NextRequest, NextResponse } from "next/server";
 import { calculateSchedule } from "@/lib/schedule-logic";
-import { UserSettings } from "@/lib/types";
+import { UserSettings, ScheduleItem } from "@/lib/types";
 import { sendTelegram, getPrayerTimes } from "@/lib/utils";
+import { toZonedTime } from "date-fns-tz";
 
 // =================================================================
 //  MAIN CRON JOB HANDLER
@@ -21,6 +22,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: "User settings not configured." }, { status: 400 });
   }
 
+  const now = toZonedTime(new Date(), settings.timezone);
+
   if (settings.mode === "strict") {
     // STRICT MODE LOGIC
     const { latitude, longitude, timezone, lastNotifiedActivity } = settings;
@@ -30,21 +33,19 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Failed to get prayer times for strict mode." }, { status: 500 });
     }
 
-    const { current } = calculateSchedule(settings, prayerTimes);
+    const scheduleResult = calculateSchedule(settings, prayerTimes);
+    const current = scheduleResult.schedule.find((item: ScheduleItem) => now >= item.startTime && now < item.endTime);
 
-    if (current.name !== lastNotifiedActivity && current.name !== "Transition") {
+    if (current && current.name !== lastNotifiedActivity && current.name !== "Free Time") {
       await sendTelegram(`🕐 <b>${current.name}</b>\n${current.description}`);
       await kv.set("user_settings", { ...settings, lastNotifiedActivity: current.name });
       return NextResponse.json({ status: "notified (strict)", new_activity: current.name });
     }
 
-    return NextResponse.json({ status: "no-change (strict)", activity: current.name });
+    return NextResponse.json({ status: "no-change (strict)", activity: current?.name || 'N/A' });
 
   } else if (settings.mode === "downtime") {
     // DOWNTIME MODE LOGIC (Cron Job)
-    // The cron job's responsibility is now only to notify, not to manage state.
-    // The frontend state machine is the source of truth for activity transitions.
-
     const { downtime, lastNotifiedActivity } = settings;
 
     if (!downtime || !downtime.activities || typeof downtime.currentActivityIndex !== 'number') {
