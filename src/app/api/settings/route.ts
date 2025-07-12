@@ -20,7 +20,7 @@ const defaultSchedule: CustomActivity[] = [
 export async function GET() {
   const userKey = "user_settings";
   try {
-    let settings = await kv.get<UserSettings>(userKey);
+    const settings = await kv.get<UserSettings>(userKey);
     if (!settings) {
       return NextResponse.json({ error: "Settings not found. Please set location first." }, { status: 404 });
     }
