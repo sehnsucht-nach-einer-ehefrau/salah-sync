@@ -41,9 +41,16 @@ export default function SalahSync() {
       const today = new Date();
       const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}?latitude=${settings.latitude}&longitude=${settings.longitude}&method=2`;
       const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch prayer times for schedule view");
+      if (!res.ok) throw new Error(`Failed to fetch prayer times. Status: ${res.status}`);
       const data = await res.json();
-      if (!data.data || !data.data.timings) throw new Error("Invalid prayer times data");
+      
+      console.log("Full response from prayer times API:", data); // Log the whole response
+
+      // The API can return a 200 OK but with an error in the body.
+      if (!data || data.code !== 200 || !data.data || !data.data.timings) {
+        console.error("Prayer times API returned a successful status but the data is invalid or indicates an error.", data);
+        throw new Error(data.data?.toString() || "Invalid data structure from prayer times API.");
+      }
       
       const { schedule, current, next } = calculateSchedule(settings, data.data.timings);
       
