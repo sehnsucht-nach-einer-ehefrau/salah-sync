@@ -341,6 +341,23 @@ export default function HomePage() {
     window.location.reload();
   };
 
+  const handleReset = async () => {
+    try {
+      const response = await fetch('/api/settings', {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to reset settings');
+      }
+
+      // Full page reload to ensure everything is re-initialized from scratch
+      window.location.reload();
+    } catch (error) {
+      console.error('Error resetting settings:', error);
+    }
+  };
+
   const formatTimeUntil = (targetTime: Date): string => {
     if (!targetTime) return "";
     const diff = targetTime.getTime() - new Date().getTime();
@@ -387,17 +404,25 @@ export default function HomePage() {
               exit={{ opacity: 0, y: -20 }}
               transition={{ duration: 0.2 }}
             >
-              <ScheduleView 
-                downtimeMode={viewState.settings.mode === 'downtime'}
-                schedule={viewState.schedule || []}
-                customActivities={viewState.settings.customActivities || []}
-                onAddActivity={handleAddActivity}
-                onRemoveActivity={handleRemoveActivity}
-                onReorder={handleReorderActivities}
-              />
+              <div className="mt-4 bg-white/10 p-4 rounded-lg">
+                <ScheduleView 
+                  downtimeMode={viewState.settings.mode === 'downtime'}
+                  schedule={viewState.schedule || []}
+                  customActivities={viewState.settings.customActivities || []}
+                  onAddActivity={handleAddActivity}
+                  onRemoveActivity={handleRemoveActivity}
+                  onReorder={handleReorderActivities}
+                />
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
+
+        <div className="mt-8 flex justify-center">
+          <Button variant="destructive" size="sm" onClick={handleReset}>
+            Reset All Settings
+          </Button>
+        </div>
         <div className={`flex items-center justify-center text-md gap-4 mt-4 transition-colors ${viewState.settings.mode === 'downtime' ? "text-gray-400" : "text-gray-500"}`}>
             <button onClick={resetLocation} className="flex items-center hover:opacity-70 transition-opacity"><MapPin className="h-4 w-4 mr-1 flex-shrink-0" /><span className="truncate">{viewState.settings.city || "Unknown"}</span></button>
             <span>•</span>

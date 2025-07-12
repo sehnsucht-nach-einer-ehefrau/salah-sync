@@ -159,6 +159,7 @@ export function MainCard({
           <h1 className="text-4xl md:text-6xl font-bold mb-2 pt-8">{currentActivity.name}</h1>
           <p className={`text-xl md:text-2xl mb-4 ${downtimeMode ? "text-gray-300" : "text-gray-600"}`}>{currentActivity.description}</p>
           
+
           <div className={`flex items-center justify-center text-lg mt-4 ${downtimeMode ? "text-gray-400" : "text-gray-500"}`}>
             <Clock className="h-5 w-5 mr-2 mb-1" />
             <span>Next: {nextActivity} in {timeUntilNext}</span>
