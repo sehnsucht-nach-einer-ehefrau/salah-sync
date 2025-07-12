@@ -101,28 +101,35 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
     };
   },
   add_activity: (settings, body) => {
-    if (!settings) throw new Error("Cannot add activity to uninitialized settings.");
+    if (!settings) throw new Error("Settings not initialized.");
     if (!body.activity) throw new Error("Activity data is missing.");
 
     const newActivity: CustomActivity = { ...body.activity, id: randomUUID() };
-    const customActivities = [...(settings.customActivities || [])];
-    
+    const currentActivities = settings.customActivities || [];
+    const newActivities = [...currentActivities];
+
     if (body.afterActivityId) {
-        const targetIndex = customActivities.findIndex(act => act.id === body.afterActivityId);
-        if (targetIndex === -1) throw new Error("Target activity not found.");
-        customActivities.splice(targetIndex + 1, 0, newActivity);
+      const index = newActivities.findIndex(a => a.id === body.afterActivityId);
+      if (index !== -1) {
+        newActivities.splice(index + 1, 0, newActivity);
+      } else {
+        newActivities.push(newActivity); // Fallback to adding at the end
+      }
     } else {
-        customActivities.push(newActivity);
+      newActivities.push(newActivity);
     }
 
-    return { ...settings, customActivities };
+    return { ...settings, customActivities: newActivities };
   },
   remove_activity: (settings, body) => {
-    if (!settings) throw new Error("Cannot remove activity from uninitialized settings.");
-    if (!body.activityId) throw new Error("Activity ID to remove is missing.");
-    
-    const newActivities = settings.customActivities.filter(act => act.id !== body.activityId);
-    return { ...settings, customActivities: newActivities };
+    if (!settings) throw new Error("Settings not initialized.");
+    if (!body.activityId) throw new Error("Activity ID is missing.");
+
+    const updatedActivities = (settings.customActivities || []).filter(
+      (activity) => activity.id !== body.activityId
+    );
+
+    return { ...settings, customActivities: updatedActivities };
   },
   toggle_mode: (settings) => {
     if (!settings) throw new Error("Cannot toggle mode on uninitialized settings.");

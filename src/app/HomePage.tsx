@@ -233,19 +233,39 @@ export default function HomePage() {
   // --- START SIMPLIFIED SCHEDULE MANAGEMENT ---
 
   const handleAddActivity = (activity: Omit<CustomActivity, 'id'>, afterActivityId: string) => {
-    // The backend will handle adding the activity to the schedule.
-    updateServer({ action: 'add_activity', activity, afterActivityId });
+    if (!viewState.settings) return;
+
+    // Optimistic update
+    const optimisticActivity: CustomActivity = { ...activity, id: `temp-${Date.now()}` };
+    const newActivities = [...(viewState.settings.customActivities || [])];
+    const index = newActivities.findIndex(a => a.id === afterActivityId);
+    if (index !== -1) {
+      newActivities.splice(index + 1, 0, optimisticActivity);
+    } else {
+      newActivities.push(optimisticActivity);
+    }
+    const optimisticSettings = { ...viewState.settings, customActivities: newActivities };
+
+    updateServer({ action: 'add_activity', activity, afterActivityId }, { settings: optimisticSettings });
   };
 
   const handleRemoveActivity = (activityId: string) => {
-    // The backend will handle removing the activity.
-    updateServer({ action: 'remove_activity', activityId });
+    if (!viewState.settings) return;
+
+    // Optimistic update
+    const newActivities = (viewState.settings.customActivities || []).filter(a => a.id !== activityId);
+    const optimisticSettings = { ...viewState.settings, customActivities: newActivities };
+
+    updateServer({ action: 'remove_activity', activityId }, { settings: optimisticSettings });
   };
 
   const handleReorderActivities = (reorderedActivities: CustomActivity[]) => {
-    // The backend will handle reordering.
-    // We only need to send the custom activities, as prayers are fixed.
-    updateServer({ action: 'update_schedule', schedule: reorderedActivities });
+    if (!viewState.settings) return;
+
+    // Optimistic update
+    const optimisticSettings = { ...viewState.settings, customActivities: reorderedActivities };
+
+    updateServer({ action: 'update_activities', activities: reorderedActivities }, { settings: optimisticSettings });
   };
 
   // --- END SIMPLIFIED SCHEDULE MANAGEMENT ---
