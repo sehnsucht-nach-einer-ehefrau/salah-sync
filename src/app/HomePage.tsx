@@ -232,13 +232,13 @@ export default function HomePage() {
 
   // --- START SIMPLIFIED SCHEDULE MANAGEMENT ---
 
-  const handleAddActivity = (activity: Omit<CustomActivity, 'id'>, afterActivityId: string) => {
+  const handleAddActivity = (activity: Omit<CustomActivity, 'id'>, afterActivityId?: string) => {
     if (!viewState.settings) return;
 
     // Optimistic update
     const optimisticActivity: CustomActivity = { ...activity, id: `temp-${Date.now()}` };
     const newActivities = [...(viewState.settings.customActivities || [])];
-    const index = newActivities.findIndex(a => a.id === afterActivityId);
+    const index = afterActivityId ? newActivities.findIndex(a => a.id === afterActivityId) : -1;
     if (index !== -1) {
       newActivities.splice(index + 1, 0, optimisticActivity);
     } else {

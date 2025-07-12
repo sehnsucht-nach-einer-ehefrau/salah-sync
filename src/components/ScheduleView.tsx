@@ -21,17 +21,18 @@ interface ScheduleViewProps {
     downtimeMode: boolean;
     schedule: ScheduleItem[];
     customActivities: CustomActivity[]; // The original list of custom activities
-    onAddActivity: (activity: Omit<CustomActivity, 'id'>, afterActivityId: string) => void;
+    onAddActivity: (activity: Omit<CustomActivity, 'id'>, afterActivityId?: string) => void;
     onRemoveActivity: (activityId: string) => void;
     onReorder: (reorderedActivities: CustomActivity[]) => void;
 }
 
-function AddActivityForm({ afterActivityId, onAddActivity }: { afterActivityId: string; onAddActivity: ScheduleViewProps['onAddActivity'] }) {
+function AddActivityForm({ onAddActivity, afterActivityId }: { onAddActivity: ScheduleViewProps['onAddActivity'], afterActivityId?: string }) {
     const [name, setName] = useState("");
     const [type, setType] = useState<ActivityType>("filler");
     const [duration, setDuration] = useState(30);
 
     const handleSubmit = () => {
+        if (!name.trim()) return; // Prevent adding empty activities
         onAddActivity({ name, type, duration: type === 'action' ? duration : undefined }, afterActivityId);
     };
 
@@ -119,9 +120,9 @@ function SortableScheduleItem({ item, downtimeMode, onRemoveActivity, onAddActiv
                 </DialogTrigger>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Add activity after {item.name}</DialogTitle>
+                        <DialogTitle>Add Activity After &quot;{item.name}&quot;</DialogTitle>
                     </DialogHeader>
-                    <AddActivityForm afterActivityId={item.id} onAddActivity={onAddActivity} />
+                    <AddActivityForm onAddActivity={onAddActivity} afterActivityId={item.id} />
                 </DialogContent>
             </Dialog>
             )}
@@ -194,6 +195,20 @@ export function ScheduleView({
                         ))}
                     </SortableContext>
                 </DndContext>
+
+                <Dialog>
+                    <DialogTrigger asChild>
+                        <Button variant="outline" className={`w-full mt-4 ${downtimeMode ? "border-gray-700 hover:bg-gray-800" : ""}`}>
+                            <PlusCircle className="h-4 w-4 mr-2" /> Add Activity
+                        </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>Add New Activity</DialogTitle>
+                        </DialogHeader>
+                        <AddActivityForm onAddActivity={onAddActivity} />
+                    </DialogContent>
+                </Dialog>
             </Card>
         </div>
     )
