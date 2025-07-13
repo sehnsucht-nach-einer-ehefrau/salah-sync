@@ -87,11 +87,18 @@ export function calculateSchedule(
 
   const timeline: ScheduleItem[] = [];
 
-  // 1. Add prayer times to the timeline
-  const prayerActivities = userSchedule.filter(act => ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'].includes(act.id));
-  prayerActivities.forEach(p => {
-    const prayerKey = p.name as keyof typeof prayerDateTimes;
-    timeline.push(createPrayerScheduleItem(p.name, prayerDateTimes[prayerKey], p.duration || 15));
+  // 1. Create obligatory prayers first (use custom duration if provided)
+  const obligatoryPrayers: { key: keyof typeof prayerDateTimes; id: string; defaultDuration: number }[] = [
+    { key: 'Fajr', id: 'fajr', defaultDuration: 15 },
+    { key: 'Dhuhr', id: 'dhuhr', defaultDuration: 15 },
+    { key: 'Asr', id: 'asr', defaultDuration: 15 },
+    { key: 'Maghrib', id: 'maghrib', defaultDuration: 15 },
+    { key: 'Isha', id: 'isha', defaultDuration: 15 },
+  ];
+
+  obligatoryPrayers.forEach(({ key, id, defaultDuration }) => {
+    const custom = userSchedule.find(a => a.id === id);
+    timeline.push(createPrayerScheduleItem(key, prayerDateTimes[key], custom?.duration || defaultDuration));
   });
 
   const fajr = timeline.find(p => p.id === 'fajr')!;
@@ -210,7 +217,9 @@ export function calculateSchedule(
 
   for (let i = 0; i < finalSchedule.length - 1; i++) {
     const currentItem = finalSchedule[i];
-    const nextItem = finalSchedule[i+1];
+    const nextItem = finalSchedule[i + 1];
+    if (!currentItem || !nextItem) continue;
+    if (!currentItem.endTime || !nextItem.startTime) continue;
     const gap = nextItem.startTime.getTime() - currentItem.endTime.getTime();
     if (gap > 0) {
       freeSlots.push({ start: currentItem.endTime, end: nextItem.startTime, duration: gap / 60000 });
