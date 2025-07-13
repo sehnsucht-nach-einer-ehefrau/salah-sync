@@ -18,22 +18,28 @@ export async function GET(request: NextRequest) {
   }
 
   const settings = await kv.get<UserSettings>("user_settings");
-  if (!settings || !settings.latitude || !settings.longitude || !settings.timezone) {
+  const latitude = settings?.latitude ?? settings?.location?.latitude;
+  const longitude = settings?.longitude ?? settings?.location?.longitude;
+  const timezone = settings?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  if (!settings || !latitude || !longitude) {
     return NextResponse.json({ message: "User settings not configured." }, { status: 400 });
   }
 
-  const now = toZonedTime(new Date(), settings.timezone);
+  const now = toZonedTime(new Date(), timezone);
 
   if (!settings.downtimeMode) {
     // STRICT MODE LOGIC
-    const { latitude, longitude, timezone, lastNotifiedActivity } = settings;
+    const lastNotifiedActivity = settings.lastNotifiedActivity;
+    const prayerLatitude = latitude;
+    const prayerLongitude = longitude;
 
-    const prayerTimes = await getPrayerTimes(latitude, longitude, timezone);
+    const prayerTimes = await getPrayerTimes(prayerLatitude, prayerLongitude, timezone);
     if (!prayerTimes) {
       return NextResponse.json({ error: "Failed to get prayer times for strict mode." }, { status: 500 });
     }
 
-    const scheduleResult = calculateSchedule(settings, prayerTimes);
+    const scheduleResult = calculateSchedule({ ...settings, timezone }, prayerTimes);
     const current = scheduleResult.schedule.find((item: ScheduleItem) => now >= item.startTime && now < item.endTime);
 
     if (current && current.name !== lastNotifiedActivity && current.name !== "Free Time") {

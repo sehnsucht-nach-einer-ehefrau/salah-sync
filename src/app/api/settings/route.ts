@@ -35,6 +35,17 @@ export async function GET() {
       return NextResponse.json({ error: "Settings not found. Please set location first." }, { status: 404 });
     }
 
+    // Ensure backward compatibility fields exist
+    if (!('latitude' in settings) && settings.location) {
+      (settings as UserSettings).latitude = settings.location.latitude;
+      (settings as UserSettings).longitude = settings.location.longitude;
+      (settings as UserSettings).city = settings.location.city;
+    }
+    if (!('timezone' in settings) || !settings.timezone) {
+      // Attempt to infer timezone from server if missing
+      (settings as UserSettings).timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    }
+
     // Data migration for users from old versions
     if (isLegacySettings(settings)) {
       const { schedule, ...rest } = settings;
@@ -82,6 +93,13 @@ const actionHandlers: Record<Action, (settings: UserSettings | null, body: Reque
       throw new Error("Missing location data for setup.");
     }
     return {
+      // Legacy flat fields for backwards compatibility
+      latitude,
+      longitude,
+      timezone,
+      city,
+
+      // New structured location fields
       location: {
         city,
         country: 'USA', // Country was not stored before, add a default

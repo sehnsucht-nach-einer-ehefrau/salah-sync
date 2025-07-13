@@ -31,7 +31,8 @@ export function calculateSchedule(
   settings: UserSettings,
   prayerTimes: PrayerTimes,
 ): { schedule: ScheduleItem[], current: ScheduleItem; next: ScheduleItem } {
-  const { timezone, customActivities: userSchedule = [] } = settings;
+  const timezone = settings.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const { customActivities: userSchedule = [] } = settings;
 
   if (!timezone) {
     const now = new Date();

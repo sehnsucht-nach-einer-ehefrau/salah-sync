@@ -43,12 +43,14 @@ export default function HomePage() {
   };
 
   const fetchFullSchedule = useCallback(async (settings: UserSettings) => {
-    if (!settings.latitude || !settings.longitude || !settings.timezone) return null;
+    const latitude = settings.latitude ?? settings.location?.latitude;
+    const longitude = settings.longitude ?? settings.location?.longitude;
+    if (!latitude || !longitude) return null;
     try {
       // This is a bit of a hack. The cron job is the source of truth, but we need the prayer times to show the full schedule.
       // In a future version, the full schedule could be stored in KV by the cron job.
       const today = new Date();
-      const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}?latitude=${settings.latitude}&longitude=${settings.longitude}&method=2`;
+      const url = `https://api.aladhan.com/v1/timings/${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}?latitude=${latitude}&longitude=${longitude}&method=2`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`Failed to fetch prayer times. Status: ${res.status}`);
       const data = await res.json();
